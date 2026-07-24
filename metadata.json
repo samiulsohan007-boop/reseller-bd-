@@ -1,0 +1,6 @@
+{
+  "name": "Reseller BD",
+  "description": "Professional Reseller Marketplace App with shared Admin Dashboard, secure local database, wallet, order tracking, profit system, and social sharing tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
