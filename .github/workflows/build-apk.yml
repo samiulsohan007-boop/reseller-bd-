@@ -53,8 +53,15 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Ensure valid Gradle Wrapper
+        run: |
+          if ! ./gradlew --version >/dev/null 2>&1; then
+            echo "Gradle wrapper corrupt or missing, regenerating..."
+            gradle wrapper --gradle-version 9.3.1
+          fi
+
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon || gradle assembleDebug --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
