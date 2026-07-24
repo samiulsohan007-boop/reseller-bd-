@@ -19,19 +19,15 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 'latest'
-          accept-android-sdk-licenses: true
-          packages: 'platforms;android-36 build-tools;36.0.0'
-
-      - name: Accept All Android SDK Licenses
+      - name: Accept Android SDK Licenses
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
-          echo -e "\n24333f8a637163e9202729af00386da836121701\n89330d3222314310b401f7107c125110d958d2e6\nd56f5187479451eabf01fb78af6d7725f081807d" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo -e "\n24333f8a637163e9202729af00386da836121701\n89330d3222314310b401f7107c125110d958d2e6\nd56f5187479451eabf01fb78af6d7725f081807d\n601007b946f40b230010839441f7ac0b21701b22" > "$ANDROID_HOME/licenses/android-sdk-license"
           echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
-          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+          echo -e "\n7a24a6528029096122b9f492a34f3b250972b32c" > "$ANDROID_HOME/licenses/android-googletv-license"
+          echo -e "\n33b622e747102b5123273823d16e4a8f13c6d322" > "$ANDROID_HOME/licenses/android-sys-img-license"
+          echo -e "\ne6756761b0c3604128002d25032049d51022201d" > "$ANDROID_HOME/licenses/android-sdk-arm-dbt-license"
+          if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
             yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
           fi
 
