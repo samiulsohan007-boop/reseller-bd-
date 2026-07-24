@@ -11,7 +11,7 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk = 35
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "com.aistudio.resellerbd.vpxgcl"
@@ -52,12 +52,12 @@ android {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       if (releaseKeystoreFile.exists()) {
-        signingConfig = signingConfigs.getByName("release")
+        signingConfig = signingConfigs.findByName("release")
       }
     }
     debug {
       if (debugKeystoreFile.exists()) {
-        signingConfig = signingConfigs.getByName("debugConfig")
+        signingConfig = signingConfigs.findByName("debugConfig")
       }
     }
   }
