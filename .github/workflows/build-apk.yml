@@ -19,8 +19,16 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Create empty .env file
-        run: touch .env
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Prepare .env file
+        run: |
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
 
       - name: Generate debug keystore if missing
         run: |
