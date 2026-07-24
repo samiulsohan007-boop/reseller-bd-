@@ -28,8 +28,19 @@ class ResellerRepository(private val appDao: AppDao) {
     suspend fun addCategory(category: CategoryItem) = appDao.insertCategory(category)
     suspend fun deleteCategory(category: CategoryItem) = appDao.deleteCategory(category)
 
-    fun getResellerByPhoneFlow(phone: String): Flow<ResellerUser?> = appDao.getResellerByPhoneFlow(phone)
-    suspend fun getResellerByPhone(phone: String): ResellerUser? = appDao.getResellerByPhone(phone)
+    private fun cleanPhone(phone: String): String {
+        return phone.trim().removePrefix("+880").removePrefix("880").removePrefix("0").filter { it.isDigit() }
+    }
+
+    fun getResellerByPhoneFlow(phone: String): Flow<ResellerUser?> {
+        val rawClean = cleanPhone(phone)
+        return appDao.getResellerByPhoneFlow(phone, rawClean)
+    }
+
+    suspend fun getResellerByPhone(phone: String): ResellerUser? {
+        val rawClean = cleanPhone(phone)
+        return appDao.getResellerByPhone(phone, rawClean)
+    }
     suspend fun getAllResellersDirectly(): List<ResellerUser> = appDao.getAllResellersDirectly()
     suspend fun addReseller(reseller: ResellerUser) = appDao.insertReseller(reseller)
     suspend fun updateReseller(reseller: ResellerUser) = appDao.updateReseller(reseller)

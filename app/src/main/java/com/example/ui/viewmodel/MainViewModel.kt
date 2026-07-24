@@ -342,47 +342,50 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         isDarkMode = !isDarkMode
     }
 
+    // Phone Normalizer Helper
+    fun normalizePhoneNumber(phone: String): String {
+        val clean = phone.trim().replace(" ", "").replace("-", "").removePrefix("+880").removePrefix("880")
+        val digitsOnly = clean.filter { it.isDigit() }
+        return if (digitsOnly.length == 10 && digitsOnly.startsWith("1")) {
+            "0$digitsOnly"
+        } else if (digitsOnly.length == 11 && digitsOnly.startsWith("01")) {
+            digitsOnly
+        } else {
+            digitsOnly.ifEmpty { phone.trim() }
+        }
+    }
+
     // Auth Simulation
     fun ensureResellerExists(phone: String, name: String = "Reseller", email: String = "") {
+        val normPhone = normalizePhoneNumber(phone)
         viewModelScope.launch {
-            val existing = repository.getResellerByPhone(phone)
+            val existing = repository.getResellerByPhone(normPhone)
             if (existing == null) {
-                repository.addReseller(ResellerUser(phone = phone, name = name, email = email, isBlocked = false))
+                repository.addReseller(ResellerUser(phone = normPhone, name = name, email = email, isBlocked = false))
             }
         }
     }
 
     fun sendOtp(phone: String) {
-        loggedInPhone = phone
+        loggedInPhone = normalizePhoneNumber(phone)
         otpCodeSent = true
     }
 
     fun verifyOtp(code: String) {
         if (code.length == 4) {
             isLoggedIn = true
+            userRole = "Reseller"
+            loggedInUserIsAdmin = false
             activeRoute = "home"
             ensureResellerExists(loggedInPhone, loggedInName, "$loggedInPhone@gmail.com")
         }
     }
 
     fun loginWithPassword(phone: String, password: String) {
+        val normPhone = normalizePhoneNumber(phone)
         viewModelScope.launch {
-            val res = repository.getResellerByPhone(phone)
+            val res = repository.getResellerByPhone(normPhone)
             if (res != null) {
-                // Check 60 days inactivity
-                val currentTime = System.currentTimeMillis()
-                val sixtyDaysMs = 60L * 24 * 60 * 60 * 1000L
-                val isInactive = res.lastActive > 0 && (currentTime - res.lastActive) >= sixtyDaysMs
-                if (isInactive) {
-                    repository.deleteReseller(res)
-                    android.widget.Toast.makeText(
-                        getApplication(),
-                        "আপনার একাউন্টটি টানা ৬০ দিন নিষ্ক্রিয় থাকার কারণে সার্ভার থেকে মুছে ফেলা হয়েছে/ব্যান করা হয়েছে।",
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                    return@launch
-                }
-
                 if (res.isBlocked) {
                     android.widget.Toast.makeText(
                         getApplication(),
@@ -393,9 +396,11 @@ class MainViewModel(application: Application, private val repository: ResellerRe
                 }
 
                 if (res.password == password) {
-                    loggedInPhone = phone
+                    loggedInPhone = res.phone
                     loggedInName = res.name
                     isLoggedIn = true
+                    userRole = "Reseller"
+                    loggedInUserIsAdmin = false
                     activeRoute = "home"
                     repository.updateReseller(res.copy(lastActive = System.currentTimeMillis()))
                     android.widget.Toast.makeText(getApplication(), "লগইন সফল হয়েছে!", android.widget.Toast.LENGTH_SHORT).show()
@@ -413,8 +418,9 @@ class MainViewModel(application: Application, private val repository: ResellerRe
     }
 
     fun checkPhoneAvailable(phone: String, onResult: (isAvailable: Boolean, message: String) -> Unit) {
+        val normPhone = normalizePhoneNumber(phone)
         viewModelScope.launch {
-            val existing = repository.getResellerByPhone(phone)
+            val existing = repository.getResellerByPhone(normPhone)
             if (existing != null) {
                 onResult(false, "এই মোবাইল নাম্বার দিয়ে ইতোমধ্যেই একটি একাউন্ট খোলা রয়েছে! একটি নাম্বার দিয়ে একবারই একাউন্ট খোলা সম্ভব।")
             } else {
@@ -431,8 +437,9 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         sellerCode: String,
         onResult: (success: Boolean, message: String) -> Unit = { _, _ -> }
     ) {
+        val normPhone = normalizePhoneNumber(phone)
         viewModelScope.launch {
-            val existing = repository.getResellerByPhone(phone)
+            val existing = repository.getResellerByPhone(normPhone)
             if (existing != null) {
                 val msg = "এই মোবাইল নাম্বার দিয়ে ইতোমধ্যেই একটি একাউন্ট খোলা রয়েছে! অনুগ্রহ করে অন্য নাম্বার দিয়ে রেজিস্ট্রেশন করুন অথবা লগইন করুন।"
                 onResult(false, msg)
@@ -441,7 +448,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
             }
 
             val newUser = ResellerUser(
-                phone = phone,
+                phone = normPhone,
                 name = name,
                 email = email,
                 isBlocked = false,
@@ -452,8 +459,10 @@ class MainViewModel(application: Application, private val repository: ResellerRe
             repository.addReseller(newUser)
 
             loggedInName = name
-            loggedInPhone = phone
+            loggedInPhone = normPhone
             isLoggedIn = true
+            userRole = "Reseller"
+            loggedInUserIsAdmin = false
             activeRoute = "home"
 
             if (sellerCode.isNotEmpty()) {
@@ -518,23 +527,25 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         newProfileImage: String,
         onResult: (Boolean, String) -> Unit
     ) {
+        val normOld = normalizePhoneNumber(oldPhone)
+        val normNew = normalizePhoneNumber(newPhone)
         viewModelScope.launch {
             try {
-                val existing = repository.getResellerByPhone(oldPhone)
+                val existing = repository.getResellerByPhone(normOld)
                 if (existing == null) {
                     onResult(false, "রিসেলার অ্যাকাউন্ট পাওয়া যায়নি!")
                     return@launch
                 }
 
-                if (oldPhone != newPhone) {
-                    val phoneInUse = repository.getResellerByPhone(newPhone)
+                if (normOld != normNew) {
+                    val phoneInUse = repository.getResellerByPhone(normNew)
                     if (phoneInUse != null) {
                         onResult(false, "এই মোবাইল নাম্বারটি ইতিমধ্যে অন্য অ্যাকাউন্টে ব্যবহৃত হচ্ছে!")
                         return@launch
                     }
 
                     val updatedReseller = existing.copy(
-                        phone = newPhone,
+                        phone = normNew,
                         name = newName,
                         email = newEmail,
                         password = newPassword,
@@ -543,7 +554,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
                     repository.addReseller(updatedReseller)
                     repository.deleteReseller(existing)
 
-                    loggedInPhone = newPhone
+                    loggedInPhone = normNew
                     loggedInName = newName
                     onResult(true, "প্রোফাইল সফলভাবে আপডেট করা হয়েছে!")
                 } else {
@@ -577,32 +588,35 @@ class MainViewModel(application: Application, private val repository: ResellerRe
     }
 
     fun loginAdmin(phone: String, password: String, onResult: (Boolean, String) -> Unit) {
-        if (phone == adminPhone || phone == "01700000000" || phone == "admin") {
-            if (password == adminPassword || password == "123456") {
-                loggedInPhone = phone
-                loggedInName = adminName
-                loggedInUserIsAdmin = true
-                userRole = "Admin"
-                isLoggedIn = true
-                activeRoute = "home"
-                onResult(true, "Welcome Admin! Logged in successfully.")
-            } else {
-                onResult(false, "ভুল পাসওয়ার্ড! সঠিক এডমিন পাসওয়ার্ড দিন।")
-            }
-        } else {
-            if (password == adminPassword || password == "123456") {
-                adminPhone = phone
-                loggedInPhone = phone
-                loggedInName = adminName
-                loggedInUserIsAdmin = true
-                userRole = "Admin"
-                isLoggedIn = true
-                activeRoute = "home"
-                onResult(true, "Welcome Admin! Logged in successfully.")
-            } else {
-                onResult(false, "এডমিন অ্যাকাউন্ট পাওয়া যায়নি বা পাসওয়ার্ড ভুল!")
-            }
+        val normInput = normalizePhoneNumber(phone)
+        val normAdmin = normalizePhoneNumber(adminPhone)
+        val rawInput = phone.trim().lowercase()
+
+        val isPhoneOrEmailMatch = normInput == normAdmin ||
+                rawInput == adminPhone.trim().lowercase() ||
+                rawInput == adminEmail.trim().lowercase() ||
+                normInput == "01700000000" ||
+                rawInput == "01700000000" ||
+                rawInput == "admin" ||
+                rawInput == "admin@resellerbd.com"
+
+        if (!isPhoneOrEmailMatch) {
+            onResult(false, "ভুল এডমিন একাউন্ট! সঠিক এডমিন ফোন নম্বর বা ইমেইল প্রদান করুন।")
+            return
         }
+
+        if (password != adminPassword) {
+            onResult(false, "ভুল এডমিন পাসওয়ার্ড! সঠিক পাসওয়ার্ড প্রদান করুন।")
+            return
+        }
+
+        loggedInPhone = adminPhone
+        loggedInName = adminName
+        loggedInUserIsAdmin = true
+        userRole = "Admin"
+        isLoggedIn = true
+        activeRoute = "home"
+        onResult(true, "এডমিন প্যানেলে সফলভাবে লগইন হয়েছে! স্বাগতম $adminName।")
     }
 
     fun updateAdminProfile(
@@ -640,8 +654,9 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         newPassword: String,
         onResult: (Boolean, String) -> Unit
     ) {
+        val normPhone = normalizePhoneNumber(phone)
         viewModelScope.launch {
-            val reseller = repository.getResellerByPhone(phone)
+            val reseller = repository.getResellerByPhone(normPhone)
             if (reseller == null) {
                 onResult(false, "এই মোবাইল নম্বরে কোনো রিসেলার অ্যাকাউন্ট পাওয়া যায়নি!")
             } else {

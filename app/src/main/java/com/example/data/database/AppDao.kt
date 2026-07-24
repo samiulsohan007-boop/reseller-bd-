@@ -90,11 +90,11 @@ interface AppDao {
     @Query("SELECT * FROM resellers ORDER BY registeredDate DESC")
     suspend fun getAllResellersDirectly(): List<ResellerUser>
 
-    @Query("SELECT * FROM resellers WHERE phone = :phone")
-    fun getResellerByPhoneFlow(phone: String): Flow<ResellerUser?>
+    @Query("SELECT * FROM resellers WHERE phone = :phone OR phone = :cleanPhone OR phone = '0' || :cleanPhone OR phone = '+880' || :cleanPhone OR phone = '880' || :cleanPhone LIMIT 1")
+    fun getResellerByPhoneFlow(phone: String, cleanPhone: String = phone): Flow<ResellerUser?>
 
-    @Query("SELECT * FROM resellers WHERE phone = :phone")
-    suspend fun getResellerByPhone(phone: String): ResellerUser?
+    @Query("SELECT * FROM resellers WHERE phone = :phone OR phone = :cleanPhone OR phone = '0' || :cleanPhone OR phone = '+880' || :cleanPhone OR phone = '880' || :cleanPhone LIMIT 1")
+    suspend fun getResellerByPhone(phone: String, cleanPhone: String = phone): ResellerUser?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertReseller(reseller: ResellerUser)

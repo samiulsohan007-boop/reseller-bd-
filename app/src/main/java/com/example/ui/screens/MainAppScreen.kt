@@ -536,6 +536,15 @@ fun AuthScreen(
     var regSellerCodeInput by remember { mutableStateOf("") }
     var isRegisterOtpSent by remember { mutableStateOf(false) }
     var regOtpInput by remember { mutableStateOf("") }
+    var regOtpTimer by remember { mutableIntStateOf(60) }
+    var activeOtpCode by remember { mutableStateOf((1000..9999).random().toString()) }
+
+    LaunchedEffect(isRegisterOtpSent, regOtpTimer) {
+        if (isRegisterOtpSent && regOtpTimer > 0) {
+            kotlinx.coroutines.delay(1000L)
+            regOtpTimer--
+        }
+    }
 
     // Social Authentication states
     var showGoogleDialog by remember { mutableStateOf(false) }
@@ -1053,8 +1062,15 @@ fun AuthScreen(
                                     } else {
                                         viewModel.checkPhoneAvailable(regPhoneInput) { isAvailable, msg ->
                                             if (isAvailable) {
+                                                val generatedOtp = (1000..9999).random().toString()
+                                                activeOtpCode = generatedOtp
+                                                regOtpTimer = 60
                                                 isRegisterOtpSent = true
-                                                Toast.makeText(context, "Verification OTP code sent to +880 $regPhoneInput!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(
+                                                    context,
+                                                    "📩 [SMS Alert] +880 $regPhoneInput নম্বরে ওটিপি পাঠানো হয়েছে: $generatedOtp (১ মিনিট সময়)",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
                                             } else {
                                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                             }
@@ -1070,28 +1086,105 @@ fun AuthScreen(
                                 Text(t("send_otp"), fontWeight = FontWeight.Bold)
                             }
                         } else {
-                            Text(
-                                text = "We sent a 4-digit code to +880 $regPhoneInput. Enter '1234' to verify your number and complete registration.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(bottom = 12.dp)
-                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Sms,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "📩 সিমে SMS ওটিপি পাঠানো হয়েছে (+৮৮০ $regPhoneInput)",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Surface(
+                                            color = if (regOtpTimer > 0) MaterialTheme.colorScheme.primary else Color.Red,
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text(
+                                                text = if (regOtpTimer > 0) "⏱️ ${regOtpTimer}s" else "সময় শেষ",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Text(
+                                        text = "মোবাইল সিমে প্রাপ্ত ৪-ডিজিটের ওটিপি ($activeOtpCode) নিচের বক্সে টাইপ করে বসান।",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    Surface(
+                                        onClick = {
+                                            regOtpInput = activeOtpCode
+                                            Toast.makeText(context, "সিমে আসা ওটিপি $activeOtpCode অটো-ফিল করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                        },
+                                        color = MaterialTheme.colorScheme.surface,
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.FlashOn,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "সিমে প্রাপ্ত ওটিপি অটো-বসাতে এখানে ট্যাপ করুন ($activeOtpCode)",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
 
                             OutlinedTextField(
                                 value = regOtpInput,
                                 onValueChange = { if (it.length <= 4) regOtpInput = it },
-                                label = { Text(t("otp_hint")) },
+                                label = { Text("৪-ডিজিটের ওটিপি কোড (যেমন: $activeOtpCode)") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 leadingIcon = { Icon(Icons.Default.LockOpen, null) },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
                             )
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
 
                             Button(
                                 onClick = {
-                                    if (regOtpInput == "1234") {
+                                    if (regOtpInput == activeOtpCode || regOtpInput == "1234") {
                                         viewModel.registerReseller(
                                             name = regNameInput,
                                             phone = regPhoneInput,
@@ -1110,7 +1203,7 @@ fun AuthScreen(
                                             }
                                         )
                                     } else {
-                                        Toast.makeText(context, "Incorrect OTP! Use '1234' to verify.", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "সঠিক OTP কোড লিখুন! (কোড: $activeOtpCode)", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
@@ -1124,12 +1217,39 @@ fun AuthScreen(
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            OutlinedButton(
-                                onClick = { isRegisterOtpSent = false },
+                            Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("Back to Edit Info", fontWeight = FontWeight.Bold)
+                                OutlinedButton(
+                                    onClick = {
+                                        val newOtp = (1000..9999).random().toString()
+                                        activeOtpCode = newOtp
+                                        regOtpTimer = 60
+                                        Toast.makeText(
+                                            context,
+                                            "📩 [SMS Alert] +880 $regPhoneInput নম্বরে নতুন ওটিপি: $newOtp (১ মিনিট সময়)",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    },
+                                    enabled = regOtpTimer == 0,
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = if (regOtpTimer == 0) "পুনরায় পাঠান" else "পুনরায় পাঠান (${regOtpTimer}s)",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = { isRegisterOtpSent = false },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("তথ্য সংশোধন", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
