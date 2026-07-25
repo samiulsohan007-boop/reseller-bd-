@@ -10,7 +10,7 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.aistudio.resellerbd.vpxgcl"
   compileSdk = 36
 
   defaultConfig {

@@ -630,7 +630,7 @@ fun AuthScreen(
 
         // App Logo Frame (Dynamic App Logo or Default)
         AsyncImage(
-            model = if (viewModel.appLogoUrl.isNotEmpty()) viewModel.appLogoUrl else com.example.R.drawable.reseller_bd_logo_1784685359743,
+            model = if (viewModel.appLogoUrl.isNotEmpty()) viewModel.appLogoUrl else com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_logo_1784685359743,
             contentDescription = "Reseller BD Logo",
             modifier = Modifier
                 .size(115.dp)
@@ -2073,7 +2073,7 @@ fun HomeScreen(
             // Dynamic Promo Banner Card (Updates automatically from Admin Panel)
             item {
                 val activeBannerUrl = banners.firstOrNull()?.imageUrl ?: ""
-                val bannerModel: Any = if (activeBannerUrl.isNotBlank()) activeBannerUrl else com.example.R.drawable.reseller_bd_banner_1784804734464
+                val bannerModel: Any = if (activeBannerUrl.isNotBlank()) activeBannerUrl else com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_banner_1784804734464
 
                 Card(
                     modifier = Modifier
@@ -7076,7 +7076,7 @@ fun AdminDashboardScreen(
 
                             // Active Banner Preview
                             val currentBannerUrl = banners.firstOrNull()?.imageUrl ?: ""
-                            val previewModel: Any = if (bannerUrlInput.isNotEmpty()) bannerUrlInput else if (currentBannerUrl.isNotEmpty()) currentBannerUrl else com.example.R.drawable.reseller_bd_banner_1784804734464
+                            val previewModel: Any = if (bannerUrlInput.isNotEmpty()) bannerUrlInput else if (currentBannerUrl.isNotEmpty()) currentBannerUrl else com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_banner_1784804734464
 
                             Text("বর্তমান এক্টিভ ব্যানার প্রিভিউ:", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             Card(
@@ -10118,7 +10118,7 @@ fun AdminProfileDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             AsyncImage(
-                                model = if (logoUrlInput.isNotEmpty()) logoUrlInput else com.example.R.drawable.reseller_bd_logo_1784685359743,
+                                model = if (logoUrlInput.isNotEmpty()) logoUrlInput else com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_logo_1784685359743,
                                 contentDescription = "Logo Preview",
                                 modifier = Modifier.fillMaxSize().clip(CircleShape),
                                 contentScale = ContentScale.Crop

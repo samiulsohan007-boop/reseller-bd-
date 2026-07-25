@@ -554,7 +554,7 @@ class ResellerRepository(private val appDao: AppDao) {
             // Set up Banners
             appDao.insertBanner(
                 Banner(
-                    imageUrl = "android.resource://com.example/" + com.example.R.drawable.reseller_bd_banner_1784804734464,
+                    imageUrl = "android.resource://com.aistudio.resellerbd.vpxgcl/" + com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_banner_1784804734464,
                     title = "রিসেলার বিডি অফিশিয়াল ব্যানার",
                     targetCategory = "All"
                 )
