@@ -468,8 +468,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         val auth = com.example.util.FirebaseHelper.getAuth(getApplication())
         if (auth == null) {
             isSendingPhoneOtp = false
-            otpCodeSent = true
-            onResult(true, "OTP sent to $e164Phone")
+            onResult(false, "Firebase Auth is not available.")
             return
         }
 
@@ -479,7 +478,9 @@ class MainViewModel(application: Application, private val repository: ResellerRe
                 auth.signInWithCredential(credential)
                     .addOnCompleteListener { task ->
                         if (task.isSuccessful) {
-                            onResult(true, "ফোন নম্বরটি স্বয়ংক্রিয়ভাবে ভেরিফাই করা হয়েছে!")
+                            onResult(true, "Phone number verified automatically!")
+                        } else {
+                            onResult(false, task.exception?.localizedMessage ?: "Auto verification failed.")
                         }
                     }
             }
@@ -487,8 +488,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
             override fun onVerificationFailed(e: FirebaseException) {
                 isSendingPhoneOtp = false
                 Log.e("MainViewModel", "Phone verification failed: ${e.message}")
-                otpCodeSent = true
-                onResult(true, "OTP sent to $e164Phone")
+                onResult(false, e.localizedMessage ?: "OTP sending failed. Check phone number or Firebase configuration.")
             }
 
             override fun onCodeSent(
@@ -499,7 +499,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
                 phoneAuthVerificationId = verificationId
                 phoneAuthResendToken = token
                 otpCodeSent = true
-                onResult(true, "Firebase OTP পাঠানো হয়েছে: $e164Phone")
+                onResult(true, "Firebase OTP sent to $e164Phone")
             }
         }
 
@@ -517,9 +517,8 @@ class MainViewModel(application: Application, private val repository: ResellerRe
             PhoneAuthProvider.verifyPhoneNumber(optionsBuilder.build())
         } catch (e: Exception) {
             isSendingPhoneOtp = false
-            otpCodeSent = true
             Log.e("MainViewModel", "PhoneAuthProvider error: ${e.message}")
-            onResult(true, "OTP sent to $e164Phone")
+            onResult(false, e.localizedMessage ?: "Error sending OTP.")
         }
     }
 
@@ -534,28 +533,16 @@ class MainViewModel(application: Application, private val repository: ResellerRe
                 auth.signInWithCredential(credential)
                     .addOnCompleteListener { task ->
                         if (task.isSuccessful) {
-                            onResult(true, "Firebase OTP ভেরিফিকেশন সফল হয়েছে!")
+                            onResult(true, "OTP Verified!")
                         } else {
-                            if (code == "1234" || code == "123456" || code.length >= 4) {
-                                onResult(true, "OTP ভেরিফিকেশন সফল হয়েছে!")
-                            } else {
-                                onResult(false, task.exception?.localizedMessage ?: "ভুল OTP কোড! আবার চেষ্টা করুন।")
-                            }
+                            onResult(false, "Invalid OTP")
                         }
                     }
             } catch (e: Exception) {
-                if (code == "1234" || code == "123456" || code.length >= 4) {
-                    onResult(true, "OTP ভেরিফিকেশন সফল হয়েছে!")
-                } else {
-                    onResult(false, "ত্রুটি: ${e.message}")
-                }
+                onResult(false, "Invalid OTP")
             }
         } else {
-            if (code == "1234" || code == "123456" || code.length >= 4) {
-                onResult(true, "OTP ভেরিফিকেশন সফল হয়েছে!")
-            } else {
-                onResult(false, "ভুল OTP কোড! আবার চেষ্টা করুন।")
-            }
+            onResult(false, "Invalid OTP or session expired. Please request OTP again.")
         }
     }
 
