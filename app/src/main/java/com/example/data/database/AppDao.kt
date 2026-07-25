@@ -96,6 +96,9 @@ interface AppDao {
     @Query("SELECT * FROM resellers WHERE phone = :phone OR phone = :cleanPhone OR phone = '0' || :cleanPhone OR phone = '+880' || :cleanPhone OR phone = '880' || :cleanPhone LIMIT 1")
     suspend fun getResellerByPhone(phone: String, cleanPhone: String = phone): ResellerUser?
 
+    @Query("SELECT * FROM resellers WHERE LOWER(email) = LOWER(:email) LIMIT 1")
+    suspend fun getResellerByEmail(email: String): ResellerUser?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertReseller(reseller: ResellerUser)
 
@@ -186,6 +189,32 @@ interface AppDao {
 
     @Delete
     suspend fun deleteTutorialVideo(video: TutorialVideo)
+
+    // Sub-Admin Requests
+    @Query("SELECT * FROM sub_admin_requests ORDER BY requestedDate DESC")
+    fun getAllSubAdminRequests(): Flow<List<SubAdminRequest>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubAdminRequest(request: SubAdminRequest): Long
+
+    @Update
+    suspend fun updateSubAdminRequest(request: SubAdminRequest)
+
+    @Delete
+    suspend fun deleteSubAdminRequest(request: SubAdminRequest)
+
+    @Query("SELECT * FROM sub_admin_requests WHERE phone = :phone ORDER BY id DESC LIMIT 1")
+    suspend fun getSubAdminRequestByPhone(phone: String): SubAdminRequest?
+
+    // Payment Method Configs
+    @Query("SELECT * FROM payment_method_configs")
+    fun getAllPaymentMethodConfigs(): Flow<List<PaymentMethodConfig>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPaymentMethodConfig(config: PaymentMethodConfig)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllPaymentMethodConfigs(configs: List<PaymentMethodConfig>)
 }
 
 

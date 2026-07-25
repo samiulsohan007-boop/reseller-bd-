@@ -18,6 +18,41 @@ class ResellerRepository(private val appDao: AppDao) {
     val banners: Flow<List<Banner>> = appDao.getBanners()
     val allResellers: Flow<List<ResellerUser>> = appDao.getAllResellers()
     val allCategories: Flow<List<CategoryItem>> = appDao.getAllCategories()
+    val allSubAdminRequests: Flow<List<SubAdminRequest>> = appDao.getAllSubAdminRequests()
+    val allPaymentMethodConfigs: Flow<List<PaymentMethodConfig>> = appDao.getAllPaymentMethodConfigs()
+
+    val firestoreManager = FirestoreManager()
+
+    suspend fun submitSubAdminRequest(request: SubAdminRequest): Long {
+        val id = appDao.insertSubAdminRequest(request)
+        firestoreManager.saveUserProfile(
+            uid = "subadmin_${request.phone}",
+            name = request.name,
+            email = request.email,
+            phone = request.phone,
+            role = "SubAdmin"
+        )
+        return id
+    }
+    suspend fun updateSubAdminRequest(request: SubAdminRequest) = appDao.updateSubAdminRequest(request)
+    suspend fun deleteSubAdminRequest(request: SubAdminRequest) = appDao.deleteSubAdminRequest(request)
+    suspend fun getSubAdminRequestByPhone(phone: String): SubAdminRequest? = appDao.getSubAdminRequestByPhone(phone)
+
+    suspend fun savePaymentMethodConfig(config: PaymentMethodConfig) {
+        appDao.insertPaymentMethodConfig(config)
+        firestoreManager.savePaymentConfigToFirestore(config)
+    }
+    suspend fun seedDefaultPaymentMethodsIfNeeded() {
+        val current = appDao.getAllPaymentMethodConfigs().first()
+        if (current.isEmpty()) {
+            val defaults = listOf(
+                PaymentMethodConfig("bKash", "বিকাশ (bKash Personal)", "01712345678", true),
+                PaymentMethodConfig("Nagad", "নগদ (Nagad Personal)", "01812345678", true),
+                PaymentMethodConfig("Rocket", "রকেট (Rocket Personal)", "01912345678", true)
+            )
+            appDao.insertAllPaymentMethodConfigs(defaults)
+        }
+    }
 
     // Support Messages Repository
     fun getSupportMessagesForReseller(phone: String): Flow<List<SupportMessage>> = appDao.getSupportMessagesForReseller(phone)
@@ -25,7 +60,10 @@ class ResellerRepository(private val appDao: AppDao) {
     suspend fun sendSupportMessage(message: SupportMessage) = appDao.insertSupportMessage(message)
     suspend fun deleteSupportMessagesForReseller(phone: String) = appDao.deleteSupportMessagesForReseller(phone)
 
-    suspend fun addCategory(category: CategoryItem) = appDao.insertCategory(category)
+    suspend fun addCategory(category: CategoryItem) {
+        appDao.insertCategory(category)
+        firestoreManager.saveCategoryToFirestore(category)
+    }
     suspend fun deleteCategory(category: CategoryItem) = appDao.deleteCategory(category)
 
     private fun cleanPhone(phone: String): String {
@@ -41,9 +79,35 @@ class ResellerRepository(private val appDao: AppDao) {
         val rawClean = cleanPhone(phone)
         return appDao.getResellerByPhone(phone, rawClean)
     }
+
+    suspend fun getResellerByEmail(email: String): ResellerUser? {
+        return appDao.getResellerByEmail(email.trim())
+    }
     suspend fun getAllResellersDirectly(): List<ResellerUser> = appDao.getAllResellersDirectly()
-    suspend fun addReseller(reseller: ResellerUser) = appDao.insertReseller(reseller)
-    suspend fun updateReseller(reseller: ResellerUser) = appDao.updateReseller(reseller)
+    suspend fun addReseller(reseller: ResellerUser) {
+        appDao.insertReseller(reseller)
+        firestoreManager.saveResellerToFirestore(reseller)
+        firestoreManager.saveUserProfile(
+            uid = reseller.phone,
+            name = reseller.name,
+            email = reseller.email,
+            phone = reseller.phone,
+            role = "Reseller",
+            profileImage = reseller.profileImage
+        )
+    }
+    suspend fun updateReseller(reseller: ResellerUser) {
+        appDao.updateReseller(reseller)
+        firestoreManager.saveResellerToFirestore(reseller)
+        firestoreManager.saveUserProfile(
+            uid = reseller.phone,
+            name = reseller.name,
+            email = reseller.email,
+            phone = reseller.phone,
+            role = "Reseller",
+            profileImage = reseller.profileImage
+        )
+    }
     suspend fun deleteReseller(reseller: ResellerUser) = appDao.deleteReseller(reseller)
 
     fun getProductById(id: Int): Flow<Product?> = appDao.getProductById(id)
@@ -58,6 +122,7 @@ class ResellerRepository(private val appDao: AppDao) {
     // Add Product (Admin Only)
     suspend fun addProduct(product: Product) {
         appDao.insertProduct(product)
+        firestoreManager.saveProductToFirestore(product)
         addNotification(
             title = "🛍️ নতুন প্রোডাক্ট যুক্ত হয়েছে!",
             message = "${product.title} (পাইকারি দাম: ৳${product.wholesalePrice.toInt()})",
@@ -70,6 +135,7 @@ class ResellerRepository(private val appDao: AppDao) {
     // Update Product (Admin Only)
     suspend fun updateProduct(product: Product) {
         appDao.updateProduct(product)
+        firestoreManager.saveProductToFirestore(product)
     }
 
     // Delete Product (Admin Only)
@@ -87,17 +153,17 @@ class ResellerRepository(private val appDao: AppDao) {
         type: String = "GENERAL",
         relatedId: Int = 0
     ) {
-        appDao.insertNotification(
-            NotificationItem(
-                title = title,
-                message = message,
-                targetRole = targetRole,
-                type = type,
-                relatedId = relatedId,
-                isRead = false,
-                timestamp = System.currentTimeMillis()
-            )
+        val item = NotificationItem(
+            title = title,
+            message = message,
+            targetRole = targetRole,
+            type = type,
+            relatedId = relatedId,
+            isRead = false,
+            timestamp = System.currentTimeMillis()
         )
+        appDao.insertNotification(item)
+        firestoreManager.saveNotificationToFirestore(item)
     }
 
     suspend fun markNotificationAsRead(id: Int) = appDao.markNotificationAsRead(id)
@@ -151,6 +217,7 @@ class ResellerRepository(private val appDao: AppDao) {
             productImageUrls = productImageUrls
         )
         val orderId = appDao.insertOrder(order)
+        firestoreManager.saveOrderToFirestore(order.copy(orderId = orderId.toInt()))
 
         // Insert Referral Order Record
         val referralComm = (totalSelling * 0.015)

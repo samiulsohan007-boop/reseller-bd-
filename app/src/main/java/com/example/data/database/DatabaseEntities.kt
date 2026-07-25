@@ -170,3 +170,28 @@ data class TutorialVideo(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "sub_admin_requests")
+data class SubAdminRequest(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val phone: String,
+    val email: String,
+    val password: String,
+    val packageName: String, // "1 Month", "6 Months", "12 Months"
+    val packagePrice: Double, // 200.0, 1000.0, 1850.0
+    val paymentMethod: String, // "bKash", "Nagad", "Rocket"
+    val senderPhone: String,
+    val trxId: String,
+    val status: String = "Pending", // "Pending", "Approved", "Rejected"
+    val requestedDate: Long = System.currentTimeMillis(),
+    val approvedDate: Long = 0L
+)
+
+@Entity(tableName = "payment_method_configs")
+data class PaymentMethodConfig(
+    @PrimaryKey val methodKey: String, // "bKash", "Nagad", "Rocket"
+    val methodName: String,
+    val accountNumber: String,
+    val isEnabled: Boolean = true
+)
+

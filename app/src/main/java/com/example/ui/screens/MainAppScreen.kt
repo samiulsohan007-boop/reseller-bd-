@@ -87,6 +87,26 @@ import com.example.ui.theme.SleekMutedText
 import com.example.ui.theme.SleekSecondaryBg
 import com.example.ui.theme.MyApplicationTheme
 
+fun sendSmsOtpToPhone(context: Context, phone: String, otpCode: String) {
+    val cleanPhone = if (phone.startsWith("+880")) phone else if (phone.startsWith("0")) "+88$phone" else "+880$phone"
+    val smsText = "আপনার ResellerBD একাউন্ট ভেরিফিকেশন ওটিপি (OTP) কোড হল: $otpCode"
+    try {
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$cleanPhone")).apply {
+            putExtra("sms_body", smsText)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("smsto:$cleanPhone")).apply {
+                putExtra("sms_body", smsText)
+            }
+            context.startActivity(intent)
+        } catch (ex: Exception) {
+            Toast.makeText(context, "SMS অ্যাপ চালু করা যায়নি। সিমে প্রাপ্ত ওটিপি কোডটি চেক করুন।", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScreen(viewModel: MainViewModel) {
@@ -247,17 +267,25 @@ fun MainAppScreen(viewModel: MainViewModel) {
                             }
                         }
 
-                        // Role Switcher Toggle (Only visible if authenticated as Admin)
+                        // Role Switcher Toggle (Only visible if authenticated as Admin or Sub-Admin)
                         if (viewModel.loggedInUserIsAdmin) {
                             Button(
                                 onClick = {
-                                    val nextRole = if (viewModel.userRole == "Reseller") "Admin" else "Reseller"
+                                    val nextRole = when (viewModel.userRole) {
+                                        "Reseller" -> "SubAdmin"
+                                        "SubAdmin" -> "Admin"
+                                        else -> "Reseller"
+                                    }
                                     viewModel.switchRole(nextRole)
                                     Toast.makeText(context, "Switched to $nextRole Panel", Toast.LENGTH_SHORT).show()
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (viewModel.userRole == "Admin") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = if (viewModel.userRole == "Admin") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+                                    containerColor = when (viewModel.userRole) {
+                                        "Admin" -> MaterialTheme.colorScheme.error
+                                        "SubAdmin" -> Color(0xFFE65100)
+                                        else -> MaterialTheme.colorScheme.secondaryContainer
+                                    },
+                                    contentColor = if (viewModel.userRole == "Admin" || viewModel.userRole == "SubAdmin") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
                                 ),
                                 shape = RoundedCornerShape(16.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -265,7 +293,12 @@ fun MainAppScreen(viewModel: MainViewModel) {
                                     .height(32.dp)
                                     .padding(end = 4.dp)
                             ) {
-                                Text(text = if (viewModel.userRole == "Admin") "Admin" else "Reseller", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                val roleLabel = when (viewModel.userRole) {
+                                    "Admin" -> "Admin"
+                                    "SubAdmin" -> "Sub-Admin"
+                                    else -> "Reseller"
+                                }
+                                Text(text = roleLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -423,7 +456,7 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onForgotPasswordClick = { showForgotPasswordDialog = true }
                 )
             } else {
-                if (viewModel.userRole == "Admin") {
+                if (viewModel.userRole == "Admin" || viewModel.userRole == "SubAdmin") {
                     AdminDashboardScreen(viewModel, products, orders, withdrawals, resellers, t = ::t)
                 } else if (isBlocked) {
                     ResellerBlockedScreen(viewModel, t = ::t)
@@ -525,6 +558,7 @@ fun AuthScreen(
 
     // Portal state
     var isAdminPortal by remember { mutableStateOf(false) }
+    var selectedPortalTab by remember { mutableIntStateOf(if (isAdminPortal) 2 else 0) }
     var adminSecretKeyInput by remember { mutableStateOf("") }
 
     // Registration states
@@ -539,31 +573,19 @@ fun AuthScreen(
     var regOtpTimer by remember { mutableIntStateOf(60) }
     var activeOtpCode by remember { mutableStateOf((1000..9999).random().toString()) }
 
+    // Sub-Admin Registration specific states
+    var subAdminOtpInput by remember { mutableStateOf("") }
+    var selectedSubAdminPackage by remember { mutableStateOf("1 Month") }
+    var selectedPaymentMethodKey by remember { mutableStateOf("bKash") }
+    var subAdminSenderPhoneInput by remember { mutableStateOf("") }
+    var subAdminTrxIdInput by remember { mutableStateOf("") }
+
     LaunchedEffect(isRegisterOtpSent, regOtpTimer) {
         if (isRegisterOtpSent && regOtpTimer > 0) {
             kotlinx.coroutines.delay(1000L)
             regOtpTimer--
         }
     }
-
-    // Social Authentication states
-    var showGoogleDialog by remember { mutableStateOf(false) }
-    var showFacebookDialog by remember { mutableStateOf(false) }
-
-    val mockGoogleAccounts = remember {
-        listOf(
-            Pair("Samiul Sohan", "samiulsohan007@gmail.com"),
-            Pair("Reseller BD Admin", "resellerbd.info@gmail.com"),
-            Pair("Samiul Partner", "samiulpartner@gmail.com")
-        )
-    }
-    var isAddingCustomGoogleAccount by remember { mutableStateOf(false) }
-    var customGoogleNameInput by remember { mutableStateOf("") }
-    var customGoogleEmailInput by remember { mutableStateOf("") }
-
-    var facebookPhoneOrEmail by remember { mutableStateOf("") }
-    var facebookPassword by remember { mutableStateOf("") }
-    var isFbPasswordVisible by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
 
@@ -653,9 +675,9 @@ fun AuthScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Portal Selector Tabs
+        // Portal Selector Tabs (Reseller Portal, Sub-Admin Portal, Admin Portal)
         TabRow(
-            selectedTabIndex = if (isAdminPortal) 1 else 0,
+            selectedTabIndex = selectedPortalTab,
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             contentColor = RoyalBlue,
             modifier = Modifier
@@ -664,24 +686,37 @@ fun AuthScreen(
                 .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(12.dp))
         ) {
             Tab(
-                selected = !isAdminPortal,
+                selected = selectedPortalTab == 0,
                 onClick = {
+                    selectedPortalTab = 0
                     isAdminPortal = false
                     isRegisterMode = false
                     isRegisterOtpSent = false
                     viewModel.otpCodeSent = false
                 },
-                text = { Text(t("reseller_portal_tab"), fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                text = { Text(t("reseller_portal_tab"), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             )
             Tab(
-                selected = isAdminPortal,
+                selected = selectedPortalTab == 1,
                 onClick = {
+                    selectedPortalTab = 1
+                    isAdminPortal = false
+                    isRegisterMode = false
+                    isRegisterOtpSent = false
+                    viewModel.otpCodeSent = false
+                },
+                text = { Text(t("sub_admin_portal_tab"), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+            )
+            Tab(
+                selected = selectedPortalTab == 2,
+                onClick = {
+                    selectedPortalTab = 2
                     isAdminPortal = true
                     isRegisterMode = false
                     isRegisterOtpSent = false
                     viewModel.otpCodeSent = false
                 },
-                text = { Text(t("admin_portal_tab"), fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                text = { Text(t("admin_portal_tab"), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             )
         }
 
@@ -694,13 +729,15 @@ fun AuthScreen(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = if (isAdminPortal) {
-                        if (isRegisterMode) t("admin_register_title") else t("admin_login_title")
-                    } else {
-                        if (isRegisterMode) {
-                            if (isRegisterOtpSent) t("otp_title") else t("register_title")
-                        } else {
-                            if (viewModel.otpCodeSent) t("otp_title") else t("login_title")
+                    text = when (selectedPortalTab) {
+                        1 -> if (isRegisterMode) t("sub_admin_register_title") else t("sub_admin_login_title")
+                        2 -> if (isRegisterMode) t("admin_register_title") else t("admin_login_title")
+                        else -> {
+                            if (isRegisterMode) {
+                                if (isRegisterOtpSent) t("otp_title") else t("register_title")
+                            } else {
+                                if (viewModel.otpCodeSent) t("otp_title") else t("login_title")
+                            }
                         }
                     },
                     fontSize = 18.sp,
@@ -708,7 +745,421 @@ fun AuthScreen(
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                if (isAdminPortal) {
+                if (selectedPortalTab == 1) {
+                    // ==========================================
+                    //             SUB-ADMIN PORTAL
+                    // ==========================================
+                    if (!isRegisterMode) {
+                        OutlinedTextField(
+                            value = phoneInput,
+                            onValueChange = { if (it.length <= 11) phoneInput = it },
+                            label = { Text(t("phone_hint")) },
+                            prefix = { Text("+880 ") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            leadingIcon = { Icon(Icons.Default.Phone, null) },
+                            modifier = Modifier.fillMaxWidth().testTag("sub_admin_phone_input"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = passwordInput,
+                            onValueChange = { passwordInput = it },
+                            label = { Text(t("password")) },
+                            placeholder = { Text(t("password_hint")) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            leadingIcon = { Icon(Icons.Default.Lock, null) },
+                            trailingIcon = {
+                                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = "Toggle password visibility"
+                                    )
+                                }
+                            },
+                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth().testTag("sub_admin_password_input"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = onForgotPasswordClick,
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "পাসওয়ার্ড ভুলে গেছেন? (Forgot Password?)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                if (phoneInput.isEmpty()) {
+                                    Toast.makeText(context, t("phone_error"), Toast.LENGTH_SHORT).show()
+                                } else if (passwordInput.length < 6) {
+                                    Toast.makeText(context, t("password_error"), Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.loginSubAdmin(phoneInput, passwordInput) { success, msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
+                            modifier = Modifier.fillMaxWidth().height(50.dp).testTag("sub_admin_login_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(t("sub_admin_login_btn"), fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        // Sub-Admin Comprehensive Registration Screen with OTP, Packages & Admin Payment Method
+                        OutlinedTextField(
+                            value = regNameInput,
+                            onValueChange = { regNameInput = it },
+                            label = { Text("নাম (Full Name)") },
+                            placeholder = { Text("আপনার নাম লিখুন") },
+                            leadingIcon = { Icon(Icons.Default.Person, null) },
+                            modifier = Modifier.fillMaxWidth().testTag("subadmin_reg_name"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = regPhoneInput,
+                            onValueChange = { if (it.length <= 11) regPhoneInput = it },
+                            label = { Text("ফোন নম্বর (Mobile Number)") },
+                            prefix = { Text("+880 ") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            leadingIcon = { Icon(Icons.Default.Phone, null) },
+                            modifier = Modifier.fillMaxWidth().testTag("subadmin_reg_phone"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // OTP Section
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (viewModel.subAdminRegOtpVerified) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("ওটিপি ভেরিফিকেশন (OTP Code)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    if (viewModel.subAdminRegOtpVerified) {
+                                        Surface(color = Color(0xFF2E7D32), shape = RoundedCornerShape(12.dp)) {
+                                            Text("ভেরিফাইড ✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = subAdminOtpInput,
+                                        onValueChange = { if (it.length <= 4) subAdminOtpInput = it },
+                                        placeholder = { Text("4 ডিজিট ওটিপি") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        singleLine = true,
+                                        enabled = !viewModel.subAdminRegOtpVerified
+                                    )
+
+                                    if (!viewModel.subAdminRegOtpVerified) {
+                                        Button(
+                                            onClick = {
+                                                if (regPhoneInput.length != 11) {
+                                                    Toast.makeText(context, "সঠিক ১১ ডিজিটের ফোন নম্বর দিন", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    val otp = viewModel.sendSubAdminRegOtp(regPhoneInput)
+                                                    Toast.makeText(context, "আপনার মোবাইলে ওটিপি কোড পাঠানো হয়েছে!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                        ) {
+                                            Text(if (viewModel.subAdminRegOtpSent) "পুনরায় পাঠান" else "ওটিপি পাঠান", fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+
+                                if (viewModel.subAdminRegOtpSent && !viewModel.subAdminRegOtpVerified) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TextButton(
+                                            onClick = {
+                                                if (viewModel.verifySubAdminRegOtp(subAdminOtpInput)) {
+                                                    Toast.makeText(context, "ওটিপি সফলভাবে ভেরিফাই হয়েছে!", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    Toast.makeText(context, "ভুল ওটিপি কোড! সঠিক কোড দিন।", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        ) {
+                                            Text("ভেরিফাই করুন", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = regEmailInput,
+                            onValueChange = { regEmailInput = it },
+                            label = { Text("জিমেইল (Gmail Address)") },
+                            placeholder = { Text("example@gmail.com") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            leadingIcon = { Icon(Icons.Default.Email, null) },
+                            modifier = Modifier.fillMaxWidth().testTag("subadmin_reg_email"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = regPasswordInput,
+                            onValueChange = { regPasswordInput = it },
+                            label = { Text("পাসওয়ার্ড (Password)") },
+                            placeholder = { Text("সর্বনিম্ন ৬ অক্ষরের পাসওয়ার্ড") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            leadingIcon = { Icon(Icons.Default.Lock, null) },
+                            trailingIcon = {
+                                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = "Toggle password visibility"
+                                    )
+                                }
+                            },
+                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth().testTag("subadmin_reg_password"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Package Selection Section
+                        Text("প্যাকেজ নির্বাচন করুন (Select Package):", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val packages = listOf(
+                            Triple("1 Month", "1 মাস", "৳200"),
+                            Triple("6 Months", "6 মাস", "৳1000"),
+                            Triple("12 Months", "12 মাস", "৳1850")
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            packages.forEach { (pkgKey, pkgTitle, pkgPrice) ->
+                                val isSelected = selectedSubAdminPackage == pkgKey
+                                Card(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { selectedSubAdminPackage = pkgKey },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isSelected) Color(0xFFE65100) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        contentColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = if (isSelected) BorderStroke(2.dp, Color(0xFFE65100)) else null
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(pkgTitle, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(pkgPrice, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Payment Methods from Admin Settings
+                        val allPaymentConfigs by viewModel.paymentMethodConfigs.collectAsState()
+                        val activePaymentMethods = remember(allPaymentConfigs) {
+                            val active = allPaymentConfigs.filter { it.isEnabled }
+                            if (active.isNotEmpty()) active else listOf(
+                                com.example.data.database.PaymentMethodConfig("bKash", "বিকাশ (bKash Personal)", "01712345678", true),
+                                com.example.data.database.PaymentMethodConfig("Nagad", "নগদ (Nagad Personal)", "01812345678", true),
+                                com.example.data.database.PaymentMethodConfig("Rocket", "রকেট (Rocket Personal)", "01912345678", true)
+                            )
+                        }
+
+                        val selectedMethodObj = activePaymentMethods.find { it.methodKey == selectedPaymentMethodKey } ?: activePaymentMethods.firstOrNull()
+                        val currentPackagePrice = when (selectedSubAdminPackage) {
+                            "6 Months" -> 1000.0
+                            "12 Months" -> 1850.0
+                            else -> 200.0
+                        }
+
+                        Text("পেমেন্ট পদ্ধতি (Payment Method):", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            activePaymentMethods.forEach { method ->
+                                val isSelected = selectedPaymentMethodKey == method.methodKey
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { selectedPaymentMethodKey = method.methodKey },
+                                    label = { Text(method.methodKey, fontWeight = FontWeight.Bold, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFFE65100),
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Payment Instructions Card
+                        selectedMethodObj?.let { method ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("পেমেন্ট ম্যানুয়াল নির্দেশাবলী:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFE65100))
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("অনুগ্ৰহ করে আপনার ${method.methodName} পার্সোনাল নম্বর থেকে ৳${currentPackagePrice.toInt()} টাকা সেন্ড মানি (Send Money) করুন:", fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = method.accountNumber,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 16.sp,
+                                            color = Color(0xFFD84315)
+                                        )
+                                        Button(
+                                            onClick = {
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                val clip = ClipData.newPlainText("Account Number", method.accountNumber)
+                                                clipboard.setPrimaryClip(clip)
+                                                Toast.makeText(context, "নম্বর কপি করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("কপি", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = subAdminSenderPhoneInput,
+                            onValueChange = { if (it.length <= 11) subAdminSenderPhoneInput = it },
+                            label = { Text("যে নম্বর থেকে টাকা পাঠিয়েছেন") },
+                            placeholder = { Text("017XXXXXXXX") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            leadingIcon = { Icon(Icons.Default.Phone, null) },
+                            modifier = Modifier.fillMaxWidth().testTag("subadmin_sender_phone"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = subAdminTrxIdInput,
+                            onValueChange = { subAdminTrxIdInput = it },
+                            label = { Text("ট্রানজেকশন আইডি (TrxID)") },
+                            placeholder = { Text("যেমন: TRX9821345") },
+                            leadingIcon = { Icon(Icons.Default.ReceiptLong, null) },
+                            modifier = Modifier.fillMaxWidth().testTag("subadmin_trx_id"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Button(
+                            onClick = {
+                                if (regNameInput.trim().isEmpty()) {
+                                    Toast.makeText(context, t("name_error"), Toast.LENGTH_SHORT).show()
+                                } else if (regPhoneInput.length != 11) {
+                                    Toast.makeText(context, t("phone_error"), Toast.LENGTH_SHORT).show()
+                                } else if (!viewModel.subAdminRegOtpVerified) {
+                                    Toast.makeText(context, "অনুগ্ৰহ করে ওটিপি ভেরিফাই করুন", Toast.LENGTH_SHORT).show()
+                                } else if (regEmailInput.trim().isEmpty()) {
+                                    Toast.makeText(context, t("email_error"), Toast.LENGTH_SHORT).show()
+                                } else if (regPasswordInput.length < 6) {
+                                    Toast.makeText(context, t("password_error"), Toast.LENGTH_SHORT).show()
+                                } else if (subAdminSenderPhoneInput.trim().isEmpty()) {
+                                    Toast.makeText(context, "যে নম্বর থেকে টাকা পাঠিয়েছেন তা লিখুন", Toast.LENGTH_SHORT).show()
+                                } else if (subAdminTrxIdInput.trim().isEmpty()) {
+                                    Toast.makeText(context, "ট্রানজেকশন আইডি (TrxID) লিখুন", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.submitSubAdminRegistrationRequest(
+                                        name = regNameInput,
+                                        phone = regPhoneInput,
+                                        email = regEmailInput,
+                                        password = regPasswordInput,
+                                        packageName = selectedSubAdminPackage,
+                                        packagePrice = currentPackagePrice,
+                                        paymentMethod = selectedMethodObj?.methodName ?: selectedPaymentMethodKey,
+                                        senderPhone = subAdminSenderPhoneInput,
+                                        trxId = subAdminTrxIdInput
+                                    ) { success, msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                        if (success) {
+                                            isRegisterMode = false
+                                        }
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
+                            modifier = Modifier.fillMaxWidth().height(52.dp).testTag("subadmin_reg_submit"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("সাব এডমিন রেজিস্ট্রেশন ও পেমেন্ট সাবমিট করুন", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+                } else if (selectedPortalTab == 2) {
                     // ==========================================
                     //               ADMIN PORTAL
                     // ==========================================
@@ -1066,9 +1517,10 @@ fun AuthScreen(
                                                 activeOtpCode = generatedOtp
                                                 regOtpTimer = 60
                                                 isRegisterOtpSent = true
+                                                sendSmsOtpToPhone(context, regPhoneInput, generatedOtp)
                                                 Toast.makeText(
                                                     context,
-                                                    "📩 [SMS Alert] +880 $regPhoneInput নম্বরে ওটিপি পাঠানো হয়েছে: $generatedOtp (১ মিনিট সময়)",
+                                                    "📩 +880 $regPhoneInput নম্বরে সিমে ওটিপি পাঠানো হয়েছে!",
                                                     Toast.LENGTH_LONG
                                                 ).show()
                                             } else {
@@ -1131,7 +1583,7 @@ fun AuthScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
 
                                     Text(
-                                        text = "মোবাইল সিমে প্রাপ্ত ৪-ডিজিটের ওটিপি ($activeOtpCode) নিচের বক্সে টাইপ করে বসান।",
+                                        text = "আপনার মোবাইল সিমে প্রাপ্ত ৪-ডিজিটের ওটিপি কোডটি নিচের বক্সে টাইপ করে বসান।",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1141,8 +1593,8 @@ fun AuthScreen(
 
                                     Surface(
                                         onClick = {
-                                            regOtpInput = activeOtpCode
-                                            Toast.makeText(context, "সিমে আসা ওটিপি $activeOtpCode অটো-ফিল করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                            // manual entry
+                                            Toast.makeText(context, "সিমে প্রাপ্ত ওটিপি কোডটি টাইপ করে লিখুন।", Toast.LENGTH_SHORT).show()
                                         },
                                         color = MaterialTheme.colorScheme.surface,
                                         shape = RoundedCornerShape(8.dp),
@@ -1160,7 +1612,7 @@ fun AuthScreen(
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
-                                                text = "সিমে প্রাপ্ত ওটিপি অটো-বসাতে এখানে ট্যাপ করুন ($activeOtpCode)",
+                                                text = "সিমে প্রাপ্ত ওটিপি বসান",
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
@@ -1173,7 +1625,7 @@ fun AuthScreen(
                             OutlinedTextField(
                                 value = regOtpInput,
                                 onValueChange = { if (it.length <= 4) regOtpInput = it },
-                                label = { Text("৪-ডিজিটের ওটিপি কোড (যেমন: $activeOtpCode)") },
+                                label = { Text("৪-ডিজিটের ওটিপি কোড লিখুন") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 leadingIcon = { Icon(Icons.Default.LockOpen, null) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -1203,7 +1655,7 @@ fun AuthScreen(
                                             }
                                         )
                                     } else {
-                                        Toast.makeText(context, "সঠিক OTP কোড লিখুন! (কোড: $activeOtpCode)", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "সঠিক OTP কোডটি লিখুন!", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
@@ -1225,6 +1677,7 @@ fun AuthScreen(
                                     onClick = {
                                         val newOtp = (1000..9999).random().toString()
                                         activeOtpCode = newOtp
+                                        sendSmsOtpToPhone(context, regPhoneInput, newOtp)
                                         regOtpTimer = 60
                                         Toast.makeText(
                                             context,
@@ -1284,286 +1737,7 @@ fun AuthScreen(
             }
         }
 
-        if (!isAdminPortal) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(text = t("or_login"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                OutlinedButton(
-                    onClick = { showGoogleDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
-                ) {
-                    Icon(Icons.Default.AccountCircle, contentDescription = null, tint = Color.Red)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(t("google_login"), fontSize = 12.sp)
-                }
-
-                OutlinedButton(
-                    onClick = { showFacebookDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
-                ) {
-                    Icon(Icons.Default.Facebook, contentDescription = null, tint = Color(0xFF1877F2))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(t("facebook_login"), fontSize = 12.sp)
-                }
-            }
-        }
-
-        // Google Account Selector Dialog
-        if (showGoogleDialog) {
-            AlertDialog(
-                onDismissRequest = { 
-                    showGoogleDialog = false 
-                    isAddingCustomGoogleAccount = false
-                },
-                title = {
-                    Text(
-                        text = t("select_google_account"),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center
-                    )
-                },
-                text = {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (!isAddingCustomGoogleAccount) {
-                            mockGoogleAccounts.forEach { account ->
-                                val (name, email) = account
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            viewModel.loginWithGoogle(name, email)
-                                            showGoogleDialog = false
-                                            Toast.makeText(context, "Welcome, $name!", Toast.LENGTH_SHORT).show()
-                                        },
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    when (name) {
-                                                        "Samiul Sohan" -> Color(0xFF4285F4)
-                                                        "Reseller BD Admin" -> Color(0xFF34A853)
-                                                        else -> Color(0xFFEA4335)
-                                                    }
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = name.take(1).uppercase(),
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 16.sp
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column {
-                                            Text(
-                                                text = name,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                            Text(
-                                                text = email,
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(4.dp))
-
-                            OutlinedButton(
-                                onClick = { isAddingCustomGoogleAccount = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(t("add_another_account"), fontSize = 13.sp)
-                            }
-                        } else {
-                            OutlinedTextField(
-                                value = customGoogleNameInput,
-                                onValueChange = { customGoogleNameInput = it },
-                                label = { Text("Your Name") },
-                                placeholder = { Text("Enter full name") },
-                                leadingIcon = { Icon(Icons.Default.Person, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            OutlinedTextField(
-                                value = customGoogleEmailInput,
-                                onValueChange = { customGoogleEmailInput = it },
-                                label = { Text("Gmail Address") },
-                                placeholder = { Text("example@gmail.com") },
-                                leadingIcon = { Icon(Icons.Default.Email, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = { isAddingCustomGoogleAccount = false },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Back")
-                                }
-                                Button(
-                                    onClick = {
-                                        if (customGoogleNameInput.trim().isEmpty()) {
-                                            Toast.makeText(context, "Please enter your name", Toast.LENGTH_SHORT).show()
-                                        } else if (!customGoogleEmailInput.contains("@") || !customGoogleEmailInput.contains(".")) {
-                                            Toast.makeText(context, "Please enter a valid Gmail address", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            viewModel.loginWithGoogle(customGoogleNameInput, customGoogleEmailInput)
-                                            showGoogleDialog = false
-                                            isAddingCustomGoogleAccount = false
-                                            Toast.makeText(context, "Welcome, $customGoogleNameInput!", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Log In")
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    if (!isAddingCustomGoogleAccount) {
-                        TextButton(
-                            onClick = { showGoogleDialog = false }
-                        ) {
-                            Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            )
-        }
-
-        // Facebook Dialog
-        if (showFacebookDialog) {
-            AlertDialog(
-                onDismissRequest = { showFacebookDialog = false },
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Facebook, contentDescription = null, tint = Color(0xFF1877F2), modifier = Modifier.size(28.dp))
-                        Text(
-                            text = t("facebook_login_title"),
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1877F2)
-                        )
-                    }
-                },
-                text = {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = facebookPhoneOrEmail,
-                            onValueChange = { facebookPhoneOrEmail = it },
-                            label = { Text(t("facebook_identifier")) },
-                            placeholder = { Text(t("facebook_identifier_hint")) },
-                            leadingIcon = { Icon(Icons.Default.Email, null) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        OutlinedTextField(
-                            value = facebookPassword,
-                            onValueChange = { facebookPassword = it },
-                            label = { Text(t("facebook_password")) },
-                            placeholder = { Text(t("facebook_password_hint")) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            leadingIcon = { Icon(Icons.Default.Lock, null) },
-                            trailingIcon = {
-                                IconButton(onClick = { isFbPasswordVisible = !isFbPasswordVisible }) {
-                                    Icon(
-                                        imageVector = if (isFbPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = "Toggle password visibility"
-                                    )
-                                }
-                            },
-                            visualTransformation = if (isFbPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (facebookPhoneOrEmail.trim().isEmpty()) {
-                                Toast.makeText(context, t("facebook_identifier_hint"), Toast.LENGTH_SHORT).show()
-                            } else if (facebookPassword.length < 6) {
-                                Toast.makeText(context, t("password_error"), Toast.LENGTH_SHORT).show()
-                            } else {
-                                viewModel.loginWithFacebook(facebookPhoneOrEmail)
-                                showFacebookDialog = false
-                                Toast.makeText(context, "Successfully Logged In with Facebook!", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(t("facebook_login_btn"), color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    OutlinedButton(
-                        onClick = { showFacebookDialog = false },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            )
-        }
     }
 }
 
@@ -4981,11 +5155,42 @@ fun AdminDashboardScreen(
             ) {
                 Text("Settings", fontSize = 11.sp)
             }
+
+            Button(
+                onClick = { activeAdminTab = "subadmin_requests" },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (activeAdminTab == "subadmin_requests") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = if (activeAdminTab == "subadmin_requests") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+                ),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                val subReqs by viewModel.subAdminRequests.collectAsState()
+                val pendSub = subReqs.count { it.status == "Pending" }
+                Text("Sub-Admin Requests ($pendSub)", fontSize = 11.sp)
+            }
+
+            Button(
+                onClick = { activeAdminTab = "payment_settings" },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (activeAdminTab == "payment_settings") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = if (activeAdminTab == "payment_settings") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+                ),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Payment Methods 💳", fontSize = 11.sp)
+            }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
         when (activeAdminTab) {
+            "subadmin_requests" -> {
+                AdminSubAdminRequestsScreen(viewModel = viewModel)
+            }
+
+            "payment_settings" -> {
+                AdminPaymentSettingsScreen(viewModel = viewModel)
+            }
             "tutorials" -> {
                 AdminTutorialVideosScreen(viewModel = viewModel)
             }
@@ -10344,7 +10549,7 @@ fun ForgotPasswordDialog(
                             OutlinedTextField(
                                 value = otpInput,
                                 onValueChange = { if (it.length <= 6) otpInput = it },
-                                label = { Text("৬ ডিজিটের OTP কোড (ডেমো: 123456)") },
+                                label = { Text("৬ ডিজিটের OTP কোড") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 leadingIcon = { Icon(Icons.Default.Pin, null) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -10360,7 +10565,7 @@ fun ForgotPasswordDialog(
                                 }
                                 if (!isOtpSent) {
                                     isOtpSent = true
-                                    Toast.makeText(context, "OTP আপনার নম্বরে পাঠানো হয়েছে! (ডেমো OTP: 123456)", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "OTP আপনার নম্বরে পাঠানো হয়েছে!", Toast.LENGTH_SHORT).show()
                                 } else {
                                     if (otpInput.length < 4) {
                                         Toast.makeText(context, "সঠিক OTP কোড লিখুন!", Toast.LENGTH_SHORT).show()
@@ -13010,6 +13215,284 @@ fun VideoPlayerModalDialog(
                                 lineHeight = 16.sp
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    val requests by viewModel.subAdminRequests.collectAsState()
+    var filterStatus by remember { mutableStateOf("All") }
+
+    val filteredRequests = remember(requests, filterStatus) {
+        if (filterStatus == "All") requests
+        else requests.filter { it.status == filterStatus }
+    }
+
+    val pendingCount = requests.count { it.status == "Pending" }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.SupervisorAccount, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(28.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text("সাব এডমিন আবেদন ও পেমেন্ট অনুমোদন", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFFE65100))
+                    Text("মোট আবেদন: ${requests.size} | অপেক্ষমান: $pendingCount", fontSize = 12.sp, color = Color.DarkGray)
+                }
+            }
+        }
+
+        // Filter Chips
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf("All" to "সব (${requests.size})", "Pending" to "অপেক্ষমান ($pendingCount)", "Approved" to "অনুমোদিত", "Rejected" to "বাতিল").forEach { (statusKey, label) ->
+                FilterChip(
+                    selected = filterStatus == statusKey,
+                    onClick = { filterStatus = statusKey },
+                    label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                )
+            }
+        }
+
+        if (filteredRequests.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                Text("কোনো সাব এডমিন আবেদন পাওয়া যায়নি", color = Color.Gray, fontSize = 13.sp)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(filteredRequests) { req ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        elevation = CardDefaults.cardElevation(2.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(req.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                                Surface(
+                                    color = when (req.status) {
+                                        "Approved" -> Color(0xFFE8F5E9)
+                                        "Rejected" -> Color(0xFFFFEBEE)
+                                        else -> Color(0xFFFFF8E1)
+                                    },
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Text(
+                                        text = when (req.status) {
+                                            "Approved" -> "অনুমোদিত"
+                                            "Rejected" -> "বাতিল"
+                                            else -> "অপেক্ষমান"
+                                        },
+                                        color = when (req.status) {
+                                            "Approved" -> Color(0xFF2E7D32)
+                                            "Rejected" -> Color(0xFFC62828)
+                                            else -> Color(0xFFF57F17)
+                                        },
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+
+                            Text("মোবাইল: +88${req.phone} | ইমেইল: ${req.email}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("প্যাকেজ: ${req.packageName} (৳${req.packagePrice.toInt()})", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1B5E20))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("পেমেন্ট মেথড: ${req.paymentMethod}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("প্রেরক নম্বর: ${req.senderPhone}", fontSize = 12.sp)
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("TrxID: ${req.trxId}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = ClipData.newPlainText("TrxID", req.trxId)
+                                        clipboard.setPrimaryClip(clip)
+                                        Toast.makeText(context, "TrxID কপি করা হয়েছে", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy TrxID", modifier = Modifier.size(14.dp))
+                                }
+                            }
+
+                            val dateStr = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(req.requestedDate))
+                            Text("আবেদনের তারিখ: $dateStr", fontSize = 10.sp, color = Color.Gray)
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (req.status != "Approved") {
+                                    Button(
+                                        onClick = {
+                                            viewModel.approveSubAdminRequest(req) {
+                                                Toast.makeText(context, "${req.name}-এর আবেদন অনুমোদন করা হয়েছে", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("একসেপ্ট করুন", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+
+                                if (req.status != "Rejected") {
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.rejectSubAdminRequest(req) {
+                                                Toast.makeText(context, "${req.name}-এর আবেদন বাতিল করা হয়েছে", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC62828)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("বাতিল", fontSize = 11.sp)
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.deleteSubAdminRequest(req) {
+                                            Toast.makeText(context, "আবেদনটি ডিলিট করা হয়েছে", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Request", tint = Color.Gray, modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminPaymentSettingsScreen(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    val paymentConfigs by viewModel.paymentMethodConfigs.collectAsState()
+
+    val defaultList = listOf(
+        com.example.data.database.PaymentMethodConfig("bKash", "বিকাশ (bKash Personal)", "01712345678", true),
+        com.example.data.database.PaymentMethodConfig("Nagad", "নগদ (Nagad Personal)", "01812345678", true),
+        com.example.data.database.PaymentMethodConfig("Rocket", "রকেট (Rocket Personal)", "01912345678", true)
+    )
+
+    val methodsToDisplay = if (paymentConfigs.isNotEmpty()) paymentConfigs else defaultList
+
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8EAF6)),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color(0xFF283593), modifier = Modifier.size(28.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text("পেমেন্ট নম্বর ও অন/অফ সেটিংস", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF283593))
+                    Text("সাব এডমিন রেজিস্ট্রেশনের সময় বিকাশ/নগদ/রকেট নম্বর এবং অন/অফ অপশন এডমিন প্যানেল থেকে নিয়ন্ত্রণ করুন", fontSize = 11.sp, color = Color.DarkGray)
+                }
+            }
+        }
+
+        methodsToDisplay.forEach { config ->
+            var accNum by remember(config.accountNumber) { mutableStateOf(config.accountNumber) }
+            var isEnabled by remember(config.isEnabled) { mutableStateOf(config.isEnabled) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(2.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(config.methodName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (isEnabled) "চালু (ON)" else "বন্ধ (OFF)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isEnabled) Color(0xFF2E7D32) else Color.Gray)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Switch(
+                                checked = isEnabled,
+                                onCheckedChange = { isEnabled = it }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = accNum,
+                        onValueChange = { accNum = it },
+                        label = { Text("${config.methodKey} পার্সোনাল নম্বর") },
+                        leadingIcon = { Icon(Icons.Default.Phone, null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Button(
+                        onClick = {
+                            viewModel.savePaymentMethodConfig(config.methodKey, config.methodName, accNum.trim(), isEnabled) {
+                                Toast.makeText(context, "${config.methodKey} পেমেন্ট তথ্য আপডেট করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.End),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("সেটিংস সেভ করুন", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

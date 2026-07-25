@@ -20,9 +20,11 @@ import androidx.room.RoomDatabase
         CustomSocialChannel::class,
         ReferredUserRecord::class,
         ReferralOrderRecord::class,
-        TutorialVideo::class
+        TutorialVideo::class,
+        SubAdminRequest::class,
+        PaymentMethodConfig::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
