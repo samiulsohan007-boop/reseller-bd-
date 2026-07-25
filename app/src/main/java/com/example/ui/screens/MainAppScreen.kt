@@ -87,26 +87,6 @@ import com.example.ui.theme.SleekMutedText
 import com.example.ui.theme.SleekSecondaryBg
 import com.example.ui.theme.MyApplicationTheme
 
-fun sendSmsOtpToPhone(context: Context, phone: String, otpCode: String) {
-    val cleanPhone = if (phone.startsWith("+880")) phone else if (phone.startsWith("0")) "+88$phone" else "+880$phone"
-    val smsText = "আপনার ResellerBD একাউন্ট ভেরিফিকেশন ওটিপি (OTP) কোড হল: $otpCode"
-    try {
-        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$cleanPhone")).apply {
-            putExtra("sms_body", smsText)
-        }
-        context.startActivity(intent)
-    } catch (e: Exception) {
-        try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("smsto:$cleanPhone")).apply {
-                putExtra("sms_body", smsText)
-            }
-            context.startActivity(intent)
-        } catch (ex: Exception) {
-            Toast.makeText(context, "SMS অ্যাপ চালু করা যায়নি। সিমে প্রাপ্ত ওটিপি কোডটি চেক করুন।", Toast.LENGTH_SHORT).show()
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScreen(viewModel: MainViewModel) {
@@ -1513,16 +1493,19 @@ fun AuthScreen(
                                     } else {
                                         viewModel.checkPhoneAvailable(regPhoneInput) { isAvailable, msg ->
                                             if (isAvailable) {
-                                                val generatedOtp = (1000..9999).random().toString()
-                                                activeOtpCode = generatedOtp
-                                                regOtpTimer = 60
-                                                isRegisterOtpSent = true
-                                                sendSmsOtpToPhone(context, regPhoneInput, generatedOtp)
-                                                Toast.makeText(
-                                                    context,
-                                                    "📩 +880 $regPhoneInput নম্বরে সিমে ওটিপি পাঠানো হয়েছে!",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
+                                                val activity = context as? android.app.Activity
+                                                if (activity != null) {
+                                                    viewModel.sendFirebasePhoneOtp(activity, regPhoneInput) { success, responseMsg ->
+                                                        Toast.makeText(context, responseMsg, Toast.LENGTH_LONG).show()
+                                                        if (success) {
+                                                            regOtpTimer = 60
+                                                            isRegisterOtpSent = true
+                                                        }
+                                                    }
+                                                } else {
+                                                    regOtpTimer = 60
+                                                    isRegisterOtpSent = true
+                                                }
                                             } else {
                                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                             }
@@ -1560,7 +1543,7 @@ fun AuthScreen(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "📩 সিমে SMS ওটিপি পাঠানো হয়েছে (+৮৮০ $regPhoneInput)",
+                                                text = "📩 Firebase OTP পাঠানো হয়েছে (+৮৮০ $regPhoneInput)",
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 12.sp,
                                                 color = MaterialTheme.colorScheme.primary
@@ -1583,49 +1566,18 @@ fun AuthScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
 
                                     Text(
-                                        text = "আপনার মোবাইল সিমে প্রাপ্ত ৪-ডিজিটের ওটিপি কোডটি নিচের বক্সে টাইপ করে বসান।",
+                                        text = "Firebase থেকে প্রাপ্ত ৬-ডিজিটের ওটিপি কোডটি টাইপ করে বসান।",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    Surface(
-                                        onClick = {
-                                            // manual entry
-                                            Toast.makeText(context, "সিমে প্রাপ্ত ওটিপি কোডটি টাইপ করে লিখুন।", Toast.LENGTH_SHORT).show()
-                                        },
-                                        color = MaterialTheme.colorScheme.surface,
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.FlashOn,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "সিমে প্রাপ্ত ওটিপি বসান",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
                                 }
                             }
 
                             OutlinedTextField(
                                 value = regOtpInput,
-                                onValueChange = { if (it.length <= 4) regOtpInput = it },
-                                label = { Text("৪-ডিজিটের ওটিপি কোড লিখুন") },
+                                onValueChange = { if (it.length <= 6) regOtpInput = it },
+                                label = { Text("৬-ডিজিটের Firebase ওটিপি কোড লিখুন") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 leadingIcon = { Icon(Icons.Default.LockOpen, null) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -1636,26 +1588,28 @@ fun AuthScreen(
 
                             Button(
                                 onClick = {
-                                    if (regOtpInput == activeOtpCode || regOtpInput == "1234") {
-                                        viewModel.registerReseller(
-                                            name = regNameInput,
-                                            phone = regPhoneInput,
-                                            email = regEmailInput,
-                                            password = regPasswordInput,
-                                            sellerCode = regSellerCodeInput,
-                                            onResult = { success, msg ->
-                                                if (success) {
-                                                    Toast.makeText(context, t("otp_verified"), Toast.LENGTH_SHORT).show()
-                                                    if (regSellerCodeInput.isNotEmpty()) {
-                                                        Toast.makeText(context, "Seller code applied! ৳৫০ referral reward added!", Toast.LENGTH_LONG).show()
+                                    viewModel.verifyFirebasePhoneOtp(regOtpInput) { verified, otpMsg ->
+                                        if (verified) {
+                                            viewModel.registerReseller(
+                                                name = regNameInput,
+                                                phone = regPhoneInput,
+                                                email = regEmailInput,
+                                                password = regPasswordInput,
+                                                sellerCode = regSellerCodeInput,
+                                                onResult = { success, msg ->
+                                                    if (success) {
+                                                        Toast.makeText(context, t("otp_verified"), Toast.LENGTH_SHORT).show()
+                                                        if (regSellerCodeInput.isNotEmpty()) {
+                                                            Toast.makeText(context, "Seller code applied! ৳৫০ referral reward added!", Toast.LENGTH_LONG).show()
+                                                        }
+                                                    } else {
+                                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                                     }
-                                                } else {
-                                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                                 }
-                                            }
-                                        )
-                                    } else {
-                                        Toast.makeText(context, "সঠিক OTP কোডটি লিখুন!", Toast.LENGTH_SHORT).show()
+                                            )
+                                        } else {
+                                            Toast.makeText(context, otpMsg, Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
@@ -1675,15 +1629,17 @@ fun AuthScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        val newOtp = (1000..9999).random().toString()
-                                        activeOtpCode = newOtp
-                                        sendSmsOtpToPhone(context, regPhoneInput, newOtp)
-                                        regOtpTimer = 60
-                                        Toast.makeText(
-                                            context,
-                                            "📩 [SMS Alert] +880 $regPhoneInput নম্বরে নতুন ওটিপি: $newOtp (১ মিনিট সময়)",
-                                            Toast.LENGTH_LONG
-                                        ).show()
+                                        val activity = context as? android.app.Activity
+                                        if (activity != null) {
+                                            viewModel.sendFirebasePhoneOtp(activity, regPhoneInput) { success, responseMsg ->
+                                                Toast.makeText(context, responseMsg, Toast.LENGTH_LONG).show()
+                                                if (success) {
+                                                    regOtpTimer = 60
+                                                }
+                                            }
+                                        } else {
+                                            regOtpTimer = 60
+                                        }
                                     },
                                     enabled = regOtpTimer == 0,
                                     modifier = Modifier.weight(1f),
@@ -10564,15 +10520,28 @@ fun ForgotPasswordDialog(
                                     return@Button
                                 }
                                 if (!isOtpSent) {
-                                    isOtpSent = true
-                                    Toast.makeText(context, "OTP আপনার নম্বরে পাঠানো হয়েছে!", Toast.LENGTH_SHORT).show()
+                                    val activity = context as? android.app.Activity
+                                    if (activity != null) {
+                                        viewModel.sendFirebasePhoneOtp(activity, phoneInput) { success, msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            if (success) isOtpSent = true
+                                        }
+                                    } else {
+                                        isOtpSent = true
+                                    }
                                 } else {
                                     if (otpInput.length < 4) {
                                         Toast.makeText(context, "সঠিক OTP কোড লিখুন!", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
-                                    isOtpVerified = true
-                                    Toast.makeText(context, "OTP ভেরিফিকেশন সফল! নতুন পাসওয়ার্ড সেট করুন।", Toast.LENGTH_SHORT).show()
+                                    viewModel.verifyFirebasePhoneOtp(otpInput) { success, msg ->
+                                        if (success) {
+                                            isOtpVerified = true
+                                            Toast.makeText(context, "OTP ভেরিফিকেশন সফল! নতুন পাসওয়ার্ড সেট করুন।", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(48.dp),
