@@ -466,11 +466,6 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         isSendingPhoneOtp = true
 
         val auth = com.example.util.FirebaseHelper.getAuth(getApplication())
-        if (auth == null) {
-            isSendingPhoneOtp = false
-            onResult(false, "Firebase Auth is not available.")
-            return
-        }
 
         val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
             override fun onVerificationCompleted(credential: PhoneAuthCredential) {
@@ -527,7 +522,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         onResult: (Boolean, String) -> Unit
     ) {
         val auth = com.example.util.FirebaseHelper.getAuth(getApplication())
-        if (auth != null && phoneAuthVerificationId.isNotEmpty()) {
+        if (phoneAuthVerificationId.isNotEmpty()) {
             try {
                 val credential = PhoneAuthProvider.getCredential(phoneAuthVerificationId, code)
                 auth.signInWithCredential(credential)
