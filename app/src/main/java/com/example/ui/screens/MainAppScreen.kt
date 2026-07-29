@@ -1493,7 +1493,7 @@ fun AuthScreen(
                                     } else {
                                         viewModel.checkPhoneAvailable(regPhoneInput) { isAvailable, msg ->
                                             if (isAvailable) {
-                                                val activity = context as? android.app.Activity
+                                                val activity = context.findActivity()
                                                 if (activity != null) {
                                                     viewModel.sendFirebasePhoneOtp(activity, regPhoneInput) { success, responseMsg ->
                                                         Toast.makeText(context, responseMsg, Toast.LENGTH_LONG).show()
@@ -1629,7 +1629,7 @@ fun AuthScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        val activity = context as? android.app.Activity
+                                        val activity = context.findActivity()
                                         if (activity != null) {
                                             viewModel.sendFirebasePhoneOtp(activity, regPhoneInput) { success, responseMsg ->
                                                 Toast.makeText(context, responseMsg, Toast.LENGTH_LONG).show()
@@ -10520,7 +10520,7 @@ fun ForgotPasswordDialog(
                                     return@Button
                                 }
                                 if (!isOtpSent) {
-                                    val activity = context as? android.app.Activity
+                                    val activity = context.findActivity()
                                     if (activity != null) {
                                         viewModel.sendFirebasePhoneOtp(activity, phoneInput) { success, msg ->
                                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -13467,6 +13467,15 @@ fun AdminPaymentSettingsScreen(viewModel: MainViewModel) {
             }
         }
     }
+}
+
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
 
 

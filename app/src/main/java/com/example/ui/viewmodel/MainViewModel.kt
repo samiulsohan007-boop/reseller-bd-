@@ -460,45 +460,55 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         phone: String,
         onResult: (Boolean, String) -> Unit
     ) {
-        val normPhone = normalizePhoneNumber(phone)
-        val e164Phone = if (normPhone.startsWith("+880")) normPhone else if (normPhone.startsWith("0")) "+88$normPhone" else "+880$normPhone"
-        loggedInPhone = normPhone
-        isSendingPhoneOtp = true
-
-        val auth = com.example.util.FirebaseHelper.getAuth(getApplication())
-
-        val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
-            override fun onVerificationCompleted(credential: PhoneAuthCredential) {
-                isSendingPhoneOtp = false
-                auth.signInWithCredential(credential)
-                    .addOnCompleteListener { task ->
-                        if (task.isSuccessful) {
-                            onResult(true, "Phone number verified automatically!")
-                        } else {
-                            onResult(false, task.exception?.localizedMessage ?: "Auto verification failed.")
-                        }
-                    }
-            }
-
-            override fun onVerificationFailed(e: FirebaseException) {
-                isSendingPhoneOtp = false
-                Log.e("MainViewModel", "Phone verification failed: ${e.message}")
-                onResult(false, e.localizedMessage ?: "OTP sending failed. Check phone number or Firebase configuration.")
-            }
-
-            override fun onCodeSent(
-                verificationId: String,
-                token: PhoneAuthProvider.ForceResendingToken
-            ) {
-                isSendingPhoneOtp = false
-                phoneAuthVerificationId = verificationId
-                phoneAuthResendToken = token
-                otpCodeSent = true
-                onResult(true, "Firebase OTP sent to $e164Phone")
+        val safeOnResult: (Boolean, String) -> Unit = { success, msg ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                onResult(success, msg)
             }
         }
 
         try {
+            val normPhone = normalizePhoneNumber(phone)
+            val e164Phone = if (normPhone.startsWith("+880")) normPhone else if (normPhone.startsWith("0")) "+88$normPhone" else if (normPhone.startsWith("+")) normPhone else "+880$normPhone"
+            loggedInPhone = normPhone
+            isSendingPhoneOtp = true
+
+            val auth = com.example.util.FirebaseHelper.getAuth(getApplication())
+
+            val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+                    isSendingPhoneOtp = false
+                    try {
+                        auth.signInWithCredential(credential)
+                            .addOnCompleteListener { task ->
+                                if (task.isSuccessful) {
+                                    safeOnResult(true, "Phone number verified automatically!")
+                                } else {
+                                    safeOnResult(false, task.exception?.localizedMessage ?: "Auto verification failed.")
+                                }
+                            }
+                    } catch (e: Throwable) {
+                        safeOnResult(false, e.localizedMessage ?: "Auto verification error.")
+                    }
+                }
+
+                override fun onVerificationFailed(e: FirebaseException) {
+                    isSendingPhoneOtp = false
+                    Log.e("MainViewModel", "Phone verification failed: ${e.message}", e)
+                    safeOnResult(false, e.localizedMessage ?: "OTP sending failed. Check phone number or Firebase configuration.")
+                }
+
+                override fun onCodeSent(
+                    verificationId: String,
+                    token: PhoneAuthProvider.ForceResendingToken
+                ) {
+                    isSendingPhoneOtp = false
+                    phoneAuthVerificationId = verificationId
+                    phoneAuthResendToken = token
+                    otpCodeSent = true
+                    safeOnResult(true, "Firebase OTP sent to $e164Phone")
+                }
+            }
+
             val optionsBuilder = PhoneAuthOptions.newBuilder(auth)
                 .setPhoneNumber(e164Phone)
                 .setTimeout(60L, TimeUnit.SECONDS)
@@ -510,10 +520,10 @@ class MainViewModel(application: Application, private val repository: ResellerRe
             }
 
             PhoneAuthProvider.verifyPhoneNumber(optionsBuilder.build())
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             isSendingPhoneOtp = false
-            Log.e("MainViewModel", "PhoneAuthProvider error: ${e.message}")
-            onResult(false, e.localizedMessage ?: "Error sending OTP.")
+            Log.e("MainViewModel", "PhoneAuthProvider error: ${e.message}", e)
+            safeOnResult(false, e.localizedMessage ?: "Error sending OTP.")
         }
     }
 
@@ -521,6 +531,12 @@ class MainViewModel(application: Application, private val repository: ResellerRe
         code: String,
         onResult: (Boolean, String) -> Unit
     ) {
+        val safeOnResult: (Boolean, String) -> Unit = { success, msg ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                onResult(success, msg)
+            }
+        }
+
         val auth = com.example.util.FirebaseHelper.getAuth(getApplication())
         if (phoneAuthVerificationId.isNotEmpty()) {
             try {
@@ -528,16 +544,16 @@ class MainViewModel(application: Application, private val repository: ResellerRe
                 auth.signInWithCredential(credential)
                     .addOnCompleteListener { task ->
                         if (task.isSuccessful) {
-                            onResult(true, "OTP Verified!")
+                            safeOnResult(true, "OTP Verified!")
                         } else {
-                            onResult(false, "Invalid OTP")
+                            safeOnResult(false, "Invalid OTP")
                         }
                     }
-            } catch (e: Exception) {
-                onResult(false, "Invalid OTP")
+            } catch (e: Throwable) {
+                safeOnResult(false, "Invalid OTP")
             }
         } else {
-            onResult(false, "Invalid OTP or session expired. Please request OTP again.")
+            safeOnResult(false, "Invalid OTP or session expired. Please request OTP again.")
         }
     }
 
