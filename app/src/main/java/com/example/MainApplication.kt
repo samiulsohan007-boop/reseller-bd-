@@ -1,11 +1,11 @@
 package com.example
 
 import android.app.Application
-import com.google.firebase.FirebaseApp
+import com.example.util.FirebaseHelper
 
 class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        FirebaseApp.initializeApp(this)
+        FirebaseHelper.initialize(this)
     }
 }
