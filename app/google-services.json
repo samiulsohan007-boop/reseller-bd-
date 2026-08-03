@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "300749102398",
+    "project_id": "reseller-bd-app",
+    "storage_bucket": "reseller-bd-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:300749102398:android:06afc60c0f6963c02ae06f",
+        "android_client_info": {
+          "package_name": "com.aistudio.resellerbd.vpxgcl"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "300749102398-gtkol3r259sjoo3irl91p4biuhujm3o3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLdaZsKJqxd33flk2iTVbQF_SELQRO4hc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "300749102398-gtkol3r259sjoo3irl91p4biuhujm3o3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
