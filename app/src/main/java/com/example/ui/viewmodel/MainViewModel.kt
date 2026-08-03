@@ -595,7 +595,7 @@ class MainViewModel(application: Application, private val repository: ResellerRe
 
     init {
         viewModelScope.launch {
-            repository.populateInitialDataIfNeeded()
+           // repository.populateInitialDataIfNeeded()
             repository.seedDefaultPaymentMethodsIfNeeded()
             checkAndCleanupInactiveResellers()
             checkAndRestoreUserSession()
