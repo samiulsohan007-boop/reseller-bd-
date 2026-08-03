@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.util.Log
 import com.example.data.database.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
@@ -55,7 +56,9 @@ class ResellerRepository(private val appDao: AppDao) {
     }
 
     // Support Messages Repository
+    fun getSupportMessagesForResellerAndAdmin(phone: String, adminKey: String): Flow<List<SupportMessage>> = appDao.getSupportMessagesForResellerAndAdmin(phone, adminKey)
     fun getSupportMessagesForReseller(phone: String): Flow<List<SupportMessage>> = appDao.getSupportMessagesForReseller(phone)
+    fun getSupportMessagesForAdminKey(adminKey: String): Flow<List<SupportMessage>> = appDao.getSupportMessagesForAdminKey(adminKey)
     val allSupportMessages: Flow<List<SupportMessage>> = appDao.getAllSupportMessages()
     suspend fun sendSupportMessage(message: SupportMessage) = appDao.insertSupportMessage(message)
     suspend fun deleteSupportMessagesForReseller(phone: String) = appDao.deleteSupportMessagesForReseller(phone)
@@ -138,9 +141,21 @@ class ResellerRepository(private val appDao: AppDao) {
         firestoreManager.saveProductToFirestore(product)
     }
 
-    // Delete Product (Admin Only)
-    suspend fun deleteProduct(product: Product) {
+    // Delete Product (Admin / SubAdmin) with optional Cancellation Reason
+    suspend fun deleteProduct(product: Product, cancellationReason: String = "") {
         appDao.deleteProduct(product)
+        firestoreManager.deleteProductFromFirestore(product.id, product.skuCode)
+
+        if (cancellationReason.isNotBlank()) {
+            val addedInfo = if (product.addedByPhone.isNotEmpty()) " (${product.addedByRole}: ${product.addedByPhone})" else ""
+            addNotification(
+                title = "❌ প্রোডাক্ট বাতিল করা হয়েছে: ${product.title}",
+                message = "প্রোডাক্ট '${product.title}' (SKU: ${product.skuCode})${addedInfo} বাতিল করার কারণ:\n$cancellationReason",
+                targetRole = "ALL",
+                type = "PRODUCT",
+                relatedId = product.id
+            )
+        }
     }
 
     // Notifications
@@ -181,24 +196,59 @@ class ResellerRepository(private val appDao: AppDao) {
         deliveryInstructions: String,
         paymentType: String,
         paymentMethod: String,
+        senderNumber: String = "",
+        transactionId: String = "",
+        paidAmount: Double = 0.0,
         totalWholesale: Double,
         totalSelling: Double,
         deliveryCharge: Double,
         productInfo: String = "",
-        productImageUrls: String = ""
+        productImageUrls: String = "",
+        adminRole: String = "Admin",
+        adminPhone: String = ""
     ): Long {
-        val profit = totalSelling - totalWholesale
-        val isFirst = isFirstOrder()
-        
-        val initialPaymentStatus = if (paymentType == "Full Advance") {
-            "Paid"
-        } else if (isFirst || paymentType == "Advance Delivery") {
-            "Pending Advance verification"
-        } else {
-            "COD"
+        val cleanTrx = transactionId.trim()
+
+        // 1. Transaction ID Uniqueness Validation
+        if (paymentType != "COD" && cleanTrx.isNotEmpty()) {
+            val countInRoom = appDao.countTransactionId(cleanTrx)
+            if (countInRoom > 0) {
+                throw IllegalArgumentException("এই Transaction ID ইতোমধ্যে ব্যবহার করা হয়েছে। অনুগ্রহ করে নতুন Transaction ID দিন।")
+            }
+            val existsInFirestore = try { firestoreManager.isTransactionIdExists(cleanTrx) } catch (e: Exception) { false }
+            if (existsInFirestore) {
+                throw IllegalArgumentException("এই Transaction ID ইতোমধ্যে ব্যবহার করা হয়েছে। অনুগ্রহ করে নতুন Transaction ID দিন।")
+            }
         }
 
+        // 2. Duplicate recent order check (within 20 seconds)
+        val recentOrders = appDao.getRecentOrdersByPhone(customerPhone, System.currentTimeMillis() - 20000)
+        val isDuplicateOrder = recentOrders.any { it.productInfo == productInfo && it.totalSellingPrice == totalSelling }
+        if (isDuplicateOrder) {
+            throw IllegalStateException("এই অর্ডারটি ইতোমধ্যে গ্রহণ করা হয়েছে।")
+        }
+
+        val profit = totalSelling - totalWholesale
+        
+        val initialPaymentStatus = if (paymentType == "COD") {
+            "COD"
+        } else {
+            "Pending Payment"
+        }
+
+        val initialOrderStatus = if (paymentType == "COD") {
+            "Pending"
+        } else {
+            "Pending Payment"
+        }
+
+        // Generate unique integer Order ID across local DB & Firestore
+        val maxLocalId = appDao.getMaxOrderId() ?: 0
+        val maxFirestoreId = try { firestoreManager.getMaxOrderIdFromFirestore() } catch (e: Exception) { 0 }
+        val nextOrderId = maxOf(maxLocalId, maxFirestoreId, 1000) + 1
+
         val order = Order(
+            orderId = nextOrderId,
             customerName = customerName,
             customerPhone = customerPhone,
             district = district,
@@ -208,22 +258,35 @@ class ResellerRepository(private val appDao: AppDao) {
             paymentType = paymentType,
             paymentMethod = paymentMethod,
             paymentStatus = initialPaymentStatus,
+            senderNumber = senderNumber,
+            transactionId = cleanTrx,
+            paidAmount = paidAmount,
             totalWholesalePrice = totalWholesale,
             totalSellingPrice = totalSelling,
             calculatedProfit = profit,
             deliveryCharge = deliveryCharge,
-            orderStatus = "Pending",
+            orderStatus = initialOrderStatus,
             productInfo = productInfo,
-            productImageUrls = productImageUrls
+            productImageUrls = productImageUrls,
+            adminRole = adminRole,
+            adminPhone = adminPhone
         )
-        val orderId = appDao.insertOrder(order)
-        firestoreManager.saveOrderToFirestore(order.copy(orderId = orderId.toInt()))
+
+        appDao.insertOrder(order)
+        
+        try {
+            firestoreManager.saveOrderToFirestore(order)
+        } catch (e: Exception) {
+            android.util.Log.w("ResellerRepository", "Firestore save order warning: ${e.message}")
+        }
+        
+        val finalOrderId = nextOrderId.toLong()
 
         // Insert Referral Order Record
         val referralComm = (totalSelling * 0.015)
         appDao.insertReferralOrder(
             ReferralOrderRecord(
-                orderIdStr = "#${orderId}",
+                orderIdStr = "#${finalOrderId}",
                 buyerName = customerName,
                 buyerPhone = customerPhone,
                 orderAmount = totalSelling,
@@ -235,14 +298,14 @@ class ResellerRepository(private val appDao: AppDao) {
 
         // Notify Admin
         addNotification(
-            title = "🛒 নতুন অর্ডার এসেছে! (#${orderId})",
+            title = "🛒 নতুন অর্ডার এসেছে! (#${finalOrderId})",
             message = "কাস্টমার: $customerName ($customerPhone) | মোট বিক্রয়: ৳${totalSelling.toInt()} (লাভ: ৳${profit.toInt()})",
             targetRole = "ADMIN",
             type = "ORDER",
-            relatedId = orderId.toInt()
+            relatedId = finalOrderId.toInt()
         )
 
-        return orderId
+        return finalOrderId
     }
 
     // Update Order Tracking Info (Can be done anytime by Admin)
@@ -311,7 +374,13 @@ class ResellerRepository(private val appDao: AppDao) {
     }
 
     // Update Order Status and trigger notifications
-    suspend fun updateOrderStatus(orderId: Int, newStatus: String, trackingNum: String = "", trackingLinkUrl: String = "") {
+    suspend fun updateOrderStatus(
+        orderId: Int,
+        newStatus: String,
+        trackingNum: String = "",
+        trackingLinkUrl: String = "",
+        cancellationReason: String = ""
+    ) {
         val orderFlow = appDao.getOrderById(orderId)
         val order = orderFlow.first() ?: return
         
@@ -327,9 +396,11 @@ class ResellerRepository(private val appDao: AppDao) {
             orderStatus = newStatus,
             trackingNumber = trackingNum.ifEmpty { order.trackingNumber },
             trackingLink = trackingLinkUrl.ifEmpty { order.trackingLink },
-            deliveredDate = deliveredTime
+            deliveredDate = deliveredTime,
+            cancellationReason = cancellationReason.ifEmpty { order.cancellationReason }
         )
         appDao.updateOrder(updatedOrder)
+        firestoreManager.saveOrderToFirestore(updatedOrder)
 
         // Sync Referral Order status & auto-credit commission on Completed/Delivered
         val refOrders = appDao.getAllReferralOrders().firstOrNull() ?: emptyList()
@@ -370,10 +441,11 @@ class ResellerRepository(private val appDao: AppDao) {
             "Shipped" -> "🚚 আপনার অর্ডার #${order.orderId} শিপমেন্টে পাঠানো হয়েছে!"
             "Delivered" -> "🎉 আপনার অর্ডার #${order.orderId} কাস্টমারের নিকট সফলভাবে ডেলিভারি করা হয়েছে! (২৪ ঘণ্টা পর লাভ ব্যালেন্স যুক্ত হবে)"
             "Cancelled" -> {
+                val reasonPart = if (cancellationReason.isNotBlank()) "\nবাতিলের কারণ: $cancellationReason" else if (order.cancellationReason.isNotBlank()) "\nবাতিলের কারণ: ${order.cancellationReason}" else ""
                 if (refundAmount > 0) {
-                    "❌ আপনার অর্ডার #${order.orderId} বাতিল করা হয়েছে। অগ্রিম পরিশোধিত ৳${refundAmount.toInt()} টাকা আপনার ওয়ালেট ব্যালেন্সে ফেরত (রিফান্ড) দেওয়া হয়েছে।"
+                    "❌ আপনার অর্ডার #${order.orderId} বাতিল করা হয়েছে।$reasonPart\nঅগ্রিম পরিশোধিত ৳${refundAmount.toInt()} টাকা আপনার ওয়ালেট ব্যালেন্সে ফেরত (রিফান্ড) দেওয়া হয়েছে।"
                 } else {
-                    "❌ আপনার অর্ডার #${order.orderId} বাতিল করা হয়েছে।"
+                    "❌ আপনার অর্ডার #${order.orderId} বাতিল করা হয়েছে।$reasonPart"
                 }
             }
             "Returned", "রিটার্নড" -> {
@@ -448,10 +520,36 @@ class ResellerRepository(private val appDao: AppDao) {
         }
     }
 
+    // Verify Order Payment (Admin)
+    suspend fun verifyOrderPayment(orderId: Int) {
+        val order = appDao.getOrderById(orderId).first() ?: return
+        val updated = order.copy(
+            paymentStatus = "Paid",
+            orderStatus = "Confirmed"
+        )
+        appDao.updateOrder(updated)
+        firestoreManager.saveOrderToFirestore(updated)
+
+        val paidVal = if (order.paidAmount > 0) order.paidAmount.toInt() else order.deliveryCharge.toInt()
+        addNotification(
+            title = "✅ ম্যানুয়াল পেমেন্ট ভেরিফাইড! (#${1000 + orderId})",
+            message = "আপনার অর্ডার #${1000 + orderId}-এর ম্যানুয়াল পেমেন্ট (৳${paidVal}) সফলভাবে ভেরিফাই করে অর্ডার কনফার্ম করা হয়েছে।",
+            targetRole = "RESELLER",
+            type = "ORDER",
+            relatedId = orderId
+        )
+    }
+
     // Update Payment Status (Admin Only)
     suspend fun updateOrderPaymentStatus(orderId: Int, paymentStatus: String) {
         val order = appDao.getOrderById(orderId).first() ?: return
-        appDao.updateOrder(order.copy(paymentStatus = paymentStatus))
+        val newOrderStatus = if (paymentStatus == "Paid" && (order.orderStatus == "Pending Payment" || order.orderStatus == "Pending")) "Confirmed" else order.orderStatus
+        val updated = order.copy(
+            paymentStatus = paymentStatus,
+            orderStatus = newOrderStatus
+        )
+        appDao.updateOrder(updated)
+        firestoreManager.saveOrderToFirestore(updated)
     }
 
     // Submit Withdrawal Request (Reseller)

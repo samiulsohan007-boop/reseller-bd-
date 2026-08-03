@@ -8,9 +8,11 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,11 +35,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +101,10 @@ fun MainAppScreen(viewModel: MainViewModel) {
     val currentRoute = viewModel.activeRoute
 
     val products by viewModel.products.collectAsState()
+    val subAdminRequests by viewModel.subAdminRequests.collectAsState()
+    val resellerProducts = remember(products, subAdminRequests) {
+        viewModel.getResellerVisibleProducts(products)
+    }
     val orders by viewModel.orders.collectAsState()
     val wallet by viewModel.wallet.collectAsState()
     val withdrawals by viewModel.withdrawals.collectAsState()
@@ -138,9 +147,10 @@ fun MainAppScreen(viewModel: MainViewModel) {
         if (prevSupportMsgCount != -1 && allSupportMessages.size > prevSupportMsgCount) {
             val latestMsg = allSupportMessages.lastOrNull()
             if (latestMsg != null) {
-                if (viewModel.userRole == "Admin" && !latestMsg.isFromAdmin) {
+                val activeKey = viewModel.getActiveAdminKey()
+                if ((viewModel.userRole == "Admin" || viewModel.userRole == "SubAdmin") && !latestMsg.isFromAdmin && latestMsg.adminKey == activeKey) {
                     SoundPlayer.playNotificationSound(context)
-                } else if (viewModel.userRole != "Admin" && latestMsg.isFromAdmin && latestMsg.resellerPhone == viewModel.loggedInPhone) {
+                } else if (viewModel.userRole != "Admin" && viewModel.userRole != "SubAdmin" && latestMsg.isFromAdmin && latestMsg.resellerPhone == viewModel.loggedInPhone) {
                     SoundPlayer.playNotificationSound(context)
                 }
             }
@@ -447,7 +457,7 @@ fun MainAppScreen(viewModel: MainViewModel) {
                             if (viewModel.selectedProduct != null) {
                                 ProductDetailsScreen(viewModel, viewModel.selectedProduct!!, t = ::t)
                             } else {
-                                HomeScreen(viewModel, products, banners, t = ::t)
+                                HomeScreen(viewModel, resellerProducts, banners, t = ::t)
                             }
                         }
                         "cart" -> CartScreen(viewModel, t = ::t)
@@ -464,7 +474,7 @@ fun MainAppScreen(viewModel: MainViewModel) {
                         )
                         "support" -> LiveSupportScreen(viewModel, t = ::t)
                         "tutorials" -> TutorialCenterScreen(viewModel = viewModel, t = ::t)
-                        else -> HomeScreen(viewModel, products, banners, t = ::t)
+                        else -> HomeScreen(viewModel, resellerProducts, banners, t = ::t)
                     }
                 }
             }
@@ -763,23 +773,6 @@ fun AuthScreen(
                             shape = RoundedCornerShape(12.dp)
                         )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(
-                                onClick = onForgotPasswordClick,
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "পাসওয়ার্ড ভুলে গেছেন? (Forgot Password?)",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-
                         Spacer(modifier = Modifier.height(10.dp))
 
                         Button(
@@ -827,89 +820,6 @@ fun AuthScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // OTP Section
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (viewModel.subAdminRegOtpVerified) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("ওটিপি ভেরিফিকেশন (OTP Code)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    if (viewModel.subAdminRegOtpVerified) {
-                                        Surface(color = Color(0xFF2E7D32), shape = RoundedCornerShape(12.dp)) {
-                                            Text("ভেরিফাইড ✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = subAdminOtpInput,
-                                        onValueChange = { if (it.length <= 4) subAdminOtpInput = it },
-                                        placeholder = { Text("4 ডিজিট ওটিপি") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(10.dp),
-                                        singleLine = true,
-                                        enabled = !viewModel.subAdminRegOtpVerified
-                                    )
-
-                                    if (!viewModel.subAdminRegOtpVerified) {
-                                        Button(
-                                            onClick = {
-                                                if (regPhoneInput.length != 11) {
-                                                    Toast.makeText(context, "সঠিক ১১ ডিজিটের ফোন নম্বর দিন", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    val otp = viewModel.sendSubAdminRegOtp(regPhoneInput)
-                                                    Toast.makeText(context, "আপনার মোবাইলে ওটিপি কোড পাঠানো হয়েছে!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                        ) {
-                                            Text(if (viewModel.subAdminRegOtpSent) "পুনরায় পাঠান" else "ওটিপি পাঠান", fontSize = 11.sp)
-                                        }
-                                    }
-                                }
-
-                                if (viewModel.subAdminRegOtpSent && !viewModel.subAdminRegOtpVerified) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        TextButton(
-                                            onClick = {
-                                                if (viewModel.verifySubAdminRegOtp(subAdminOtpInput)) {
-                                                    Toast.makeText(context, "ওটিপি সফলভাবে ভেরিফাই হয়েছে!", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(context, "ভুল ওটিপি কোড! সঠিক কোড দিন।", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        ) {
-                                            Text("ভেরিফাই করুন", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
                         OutlinedTextField(
                             value = regEmailInput,
                             onValueChange = { regEmailInput = it },
@@ -949,15 +859,18 @@ fun AuthScreen(
                         Text("প্যাকেজ নির্বাচন করুন (Select Package):", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        val packages = listOf(
-                            Triple("1 Month", "1 মাস", "৳200"),
-                            Triple("6 Months", "6 মাস", "৳1000"),
-                            Triple("12 Months", "12 মাস", "৳1850")
-                        )
+                        val packages = buildList {
+                            add(Triple("1 Month", "1 মাস", "৳200"))
+                            add(Triple("6 Months", "6 মাস", "৳1000"))
+                            add(Triple("12 Months", "12 মাস", "৳1850"))
+                            if (viewModel.isVipFreePackageEnabled) {
+                                add(Triple("VIP Free", "ফ্রি (VIP)", "৳0"))
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             packages.forEach { (pkgKey, pkgTitle, pkgPrice) ->
                                 val isSelected = selectedSubAdminPackage == pkgKey
@@ -973,127 +886,153 @@ fun AuthScreen(
                                     border = if (isSelected) BorderStroke(2.dp, Color(0xFFE65100)) else null
                                 ) {
                                     Column(
-                                        modifier = Modifier.padding(10.dp),
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
-                                        Text(pkgTitle, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text(pkgTitle, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         Spacer(modifier = Modifier.height(2.dp))
-                                        Text(pkgPrice, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                                        Text(pkgPrice, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
                                     }
+                                }
+                            }
+                        }
+
+                        val isVipFreeSelected = selectedSubAdminPackage == "VIP Free"
+
+                        if (isVipFreeSelected) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF3E5F5)),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFF7B1FA2), modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("VIP ফ্রি প্যাকেজ নির্দেশাবলী:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF7B1FA2))
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "📌 নোট: ফ্রি (VIP) প্যাকেজ অপশনটি শুধুমাত্র VIP সদস্যদের জন্য। এই আবেদনটি মেইন এডমিন ম্যানুয়ালি একসেপ্ট না করা পর্যন্ত সাব-এডমিন অ্যাকাউন্ট চালু হবে না।",
+                                        fontSize = 11.sp,
+                                        color = Color.DarkGray
+                                    )
                                 }
                             }
                         }
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Payment Methods from Admin Settings
-                        val allPaymentConfigs by viewModel.paymentMethodConfigs.collectAsState()
-                        val activePaymentMethods = remember(allPaymentConfigs) {
-                            val active = allPaymentConfigs.filter { it.isEnabled }
-                            if (active.isNotEmpty()) active else listOf(
-                                com.example.data.database.PaymentMethodConfig("bKash", "বিকাশ (bKash Personal)", "01712345678", true),
-                                com.example.data.database.PaymentMethodConfig("Nagad", "নগদ (Nagad Personal)", "01812345678", true),
-                                com.example.data.database.PaymentMethodConfig("Rocket", "রকেট (Rocket Personal)", "01912345678", true)
-                            )
-                        }
-
-                        val selectedMethodObj = activePaymentMethods.find { it.methodKey == selectedPaymentMethodKey } ?: activePaymentMethods.firstOrNull()
-                        val currentPackagePrice = when (selectedSubAdminPackage) {
-                            "6 Months" -> 1000.0
-                            "12 Months" -> 1850.0
-                            else -> 200.0
-                        }
-
-                        Text("পেমেন্ট পদ্ধতি (Payment Method):", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            activePaymentMethods.forEach { method ->
-                                val isSelected = selectedPaymentMethodKey == method.methodKey
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { selectedPaymentMethodKey = method.methodKey },
-                                    label = { Text(method.methodKey, fontWeight = FontWeight.Bold, fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Color(0xFFE65100),
-                                        selectedLabelColor = Color.White
-                                    )
+                        if (!isVipFreeSelected) {
+                            // Payment Methods from Admin Settings
+                            val allPaymentConfigs by viewModel.paymentMethodConfigs.collectAsState()
+                            val activePaymentMethods = remember(allPaymentConfigs) {
+                                val active = allPaymentConfigs.filter { it.isEnabled }
+                                if (active.isNotEmpty()) active else listOf(
+                                    com.example.data.database.PaymentMethodConfig("bKash", "বিকাশ (bKash Personal)", "01712345678", true),
+                                    com.example.data.database.PaymentMethodConfig("Nagad", "নগদ (Nagad Personal)", "01812345678", true),
+                                    com.example.data.database.PaymentMethodConfig("Rocket", "রকেট (Rocket Personal)", "01912345678", true)
                                 )
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                            val selectedMethodObj = activePaymentMethods.find { it.methodKey == selectedPaymentMethodKey } ?: activePaymentMethods.firstOrNull()
+                            val currentPackagePrice = when (selectedSubAdminPackage) {
+                                "6 Months" -> 1000.0
+                                "12 Months" -> 1850.0
+                                else -> 200.0
+                            }
 
-                        // Payment Instructions Card
-                        selectedMethodObj?.let { method ->
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
+                            Text("পেমেন্ট পদ্ধতি (Payment Method):", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text("পেমেন্ট ম্যানুয়াল নির্দেশাবলী:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFE65100))
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text("অনুগ্ৰহ করে আপনার ${method.methodName} পার্সোনাল নম্বর থেকে ৳${currentPackagePrice.toInt()} টাকা সেন্ড মানি (Send Money) করুন:", fontSize = 12.sp)
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = method.accountNumber,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 16.sp,
-                                            color = Color(0xFFD84315)
+                                activePaymentMethods.forEach { method ->
+                                    val isSelected = selectedPaymentMethodKey == method.methodKey
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = { selectedPaymentMethodKey = method.methodKey },
+                                        label = { Text(method.methodKey, fontWeight = FontWeight.Bold, fontSize = 12.sp) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = Color(0xFFE65100),
+                                            selectedLabelColor = Color.White
                                         )
-                                        Button(
-                                            onClick = {
-                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                                val clip = ClipData.newPlainText("Account Number", method.accountNumber)
-                                                clipboard.setPrimaryClip(clip)
-                                                Toast.makeText(context, "নম্বর কপি করা হয়েছে!", Toast.LENGTH_SHORT).show()
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                            shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Payment Instructions Card
+                            selectedMethodObj?.let { method ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("পেমেন্ট ম্যানুয়াল নির্দেশাবলী:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFE65100))
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("অনুগ্ৰহ করে আপনার ${method.methodName} পার্সোনাল নম্বর থেকে ৳${currentPackagePrice.toInt()} টাকা সেন্ড মানি (Send Money) করুন:", fontSize = 12.sp)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("কপি", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = method.accountNumber,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 16.sp,
+                                                color = Color(0xFFD84315)
+                                            )
+                                            Button(
+                                                onClick = {
+                                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                    val clip = ClipData.newPlainText("Account Number", method.accountNumber)
+                                                    clipboard.setPrimaryClip(clip)
+                                                    Toast.makeText(context, "নম্বর কপি করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("কপি", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
                                         }
                                     }
                                 }
                             }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedTextField(
+                                value = subAdminSenderPhoneInput,
+                                onValueChange = { if (it.length <= 11) subAdminSenderPhoneInput = it },
+                                label = { Text("যে নম্বর থেকে টাকা পাঠিয়েছেন") },
+                                placeholder = { Text("017XXXXXXXX") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                leadingIcon = { Icon(Icons.Default.Phone, null) },
+                                modifier = Modifier.fillMaxWidth().testTag("subadmin_sender_phone"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedTextField(
+                                value = subAdminTrxIdInput,
+                                onValueChange = { subAdminTrxIdInput = it },
+                                label = { Text("ট্রানজেকশন আইডি (TrxID)") },
+                                placeholder = { Text("যেমন: TRX9821345") },
+                                leadingIcon = { Icon(Icons.Default.ReceiptLong, null) },
+                                modifier = Modifier.fillMaxWidth().testTag("subadmin_trx_id"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
                         }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        OutlinedTextField(
-                            value = subAdminSenderPhoneInput,
-                            onValueChange = { if (it.length <= 11) subAdminSenderPhoneInput = it },
-                            label = { Text("যে নম্বর থেকে টাকা পাঠিয়েছেন") },
-                            placeholder = { Text("017XXXXXXXX") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                            leadingIcon = { Icon(Icons.Default.Phone, null) },
-                            modifier = Modifier.fillMaxWidth().testTag("subadmin_sender_phone"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        OutlinedTextField(
-                            value = subAdminTrxIdInput,
-                            onValueChange = { subAdminTrxIdInput = it },
-                            label = { Text("ট্রানজেকশন আইডি (TrxID)") },
-                            placeholder = { Text("যেমন: TRX9821345") },
-                            leadingIcon = { Icon(Icons.Default.ReceiptLong, null) },
-                            modifier = Modifier.fillMaxWidth().testTag("subadmin_trx_id"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
 
                         Spacer(modifier = Modifier.height(16.dp))
 
@@ -1103,27 +1042,35 @@ fun AuthScreen(
                                     Toast.makeText(context, t("name_error"), Toast.LENGTH_SHORT).show()
                                 } else if (regPhoneInput.length != 11) {
                                     Toast.makeText(context, t("phone_error"), Toast.LENGTH_SHORT).show()
-                                } else if (!viewModel.subAdminRegOtpVerified) {
-                                    Toast.makeText(context, "অনুগ্ৰহ করে ওটিপি ভেরিফাই করুন", Toast.LENGTH_SHORT).show()
                                 } else if (regEmailInput.trim().isEmpty()) {
                                     Toast.makeText(context, t("email_error"), Toast.LENGTH_SHORT).show()
                                 } else if (regPasswordInput.length < 6) {
                                     Toast.makeText(context, t("password_error"), Toast.LENGTH_SHORT).show()
-                                } else if (subAdminSenderPhoneInput.trim().isEmpty()) {
+                                } else if (!isVipFreeSelected && subAdminSenderPhoneInput.trim().isEmpty()) {
                                     Toast.makeText(context, "যে নম্বর থেকে টাকা পাঠিয়েছেন তা লিখুন", Toast.LENGTH_SHORT).show()
-                                } else if (subAdminTrxIdInput.trim().isEmpty()) {
+                                } else if (!isVipFreeSelected && subAdminTrxIdInput.trim().isEmpty()) {
                                     Toast.makeText(context, "ট্রানজেকশন আইডি (TrxID) লিখুন", Toast.LENGTH_SHORT).show()
                                 } else {
+                                    val currentPrice = when (selectedSubAdminPackage) {
+                                        "VIP Free" -> 0.0
+                                        "6 Months" -> 1000.0
+                                        "12 Months" -> 1850.0
+                                        else -> 200.0
+                                    }
+                                    val methodUsed = if (isVipFreeSelected) "VIP Free Request" else selectedPaymentMethodKey
+                                    val sPhone = if (isVipFreeSelected) regPhoneInput else subAdminSenderPhoneInput
+                                    val tId = if (isVipFreeSelected) "VIP_FREE_REGISTRATION" else subAdminTrxIdInput
+
                                     viewModel.submitSubAdminRegistrationRequest(
                                         name = regNameInput,
                                         phone = regPhoneInput,
                                         email = regEmailInput,
                                         password = regPasswordInput,
                                         packageName = selectedSubAdminPackage,
-                                        packagePrice = currentPackagePrice,
-                                        paymentMethod = selectedMethodObj?.methodName ?: selectedPaymentMethodKey,
-                                        senderPhone = subAdminSenderPhoneInput,
-                                        trxId = subAdminTrxIdInput
+                                        packagePrice = currentPrice,
+                                        paymentMethod = methodUsed,
+                                        senderPhone = sPhone,
+                                        trxId = tId
                                     ) { success, msg ->
                                         Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                         if (success) {
@@ -1132,11 +1079,15 @@ fun AuthScreen(
                                     }
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isVipFreeSelected) Color(0xFF7B1FA2) else Color(0xFFE65100)),
                             modifier = Modifier.fillMaxWidth().height(52.dp).testTag("subadmin_reg_submit"),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("সাব এডমিন রেজিস্ট্রেশন ও পেমেন্ট সাবমিট করুন", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                if (isVipFreeSelected) "VIP ফ্রি সাব এডমিন আবেদন সাবমিট করুন" else "সাব এডমিন রেজিস্ট্রেশন ও পেমেন্ট সাবমিট করুন",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
                         }
                     }
                 } else if (selectedPortalTab == 2) {
@@ -1177,23 +1128,6 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth().testTag("admin_password_input"),
                             shape = RoundedCornerShape(12.dp)
                         )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(
-                                onClick = onForgotPasswordClick,
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "পাসওয়ার্ড ভুলে গেছেন? (Forgot Password?)",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
 
                         Spacer(modifier = Modifier.height(10.dp))
 
@@ -1406,260 +1340,113 @@ fun AuthScreen(
                             Text(t("login_btn"), fontWeight = FontWeight.Bold)
                         }
                     } else {
-                        // REGISTRATION MODE
-                        if (!isRegisterOtpSent) {
-                            OutlinedTextField(
-                                value = regNameInput,
-                                onValueChange = { regNameInput = it },
-                                label = { Text(t("name")) },
-                                placeholder = { Text(t("name_hint")) },
-                                leadingIcon = { Icon(Icons.Default.Person, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
+                        // REGISTRATION MODE (Email/Password & Profile Save)
+                        OutlinedTextField(
+                            value = regNameInput,
+                            onValueChange = { regNameInput = it },
+                            label = { Text(t("name")) },
+                            placeholder = { Text(t("name_hint")) },
+                            leadingIcon = { Icon(Icons.Default.Person, null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                            OutlinedTextField(
-                                value = regPhoneInput,
-                                onValueChange = { if (it.length <= 11) regPhoneInput = it },
-                                label = { Text(t("phone_hint")) },
-                                prefix = { Text("+880 ") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                                leadingIcon = { Icon(Icons.Default.Phone, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
+                        OutlinedTextField(
+                            value = regPhoneInput,
+                            onValueChange = { if (it.length <= 11) regPhoneInput = it },
+                            label = { Text(t("phone_hint")) },
+                            prefix = { Text("+880 ") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            leadingIcon = { Icon(Icons.Default.Phone, null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                            OutlinedTextField(
-                                value = regEmailInput,
-                                onValueChange = { regEmailInput = it },
-                                label = { Text(t("email")) },
-                                placeholder = { Text(t("email_hint")) },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                                leadingIcon = { Icon(Icons.Default.Email, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
+                        OutlinedTextField(
+                            value = regEmailInput,
+                            onValueChange = { regEmailInput = it },
+                            label = { Text(t("email")) },
+                            placeholder = { Text(t("email_hint")) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            leadingIcon = { Icon(Icons.Default.Email, null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                            OutlinedTextField(
-                                value = regPasswordInput,
-                                onValueChange = { regPasswordInput = it },
-                                label = { Text(t("password")) },
-                                placeholder = { Text(t("password_hint")) },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                leadingIcon = { Icon(Icons.Default.Lock, null) },
-                                trailingIcon = {
-                                    IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
-                                        Icon(
-                                            imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = "Toggle password visibility"
-                                        )
-                                    }
-                                },
-                                visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            OutlinedTextField(
-                                value = regSellerCodeInput,
-                                onValueChange = { regSellerCodeInput = it },
-                                label = { Text(t("seller_code")) },
-                                placeholder = { Text(t("seller_code_hint")) },
-                                leadingIcon = { Icon(Icons.Default.GroupAdd, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Button(
-                                onClick = {
-                                    if (regNameInput.trim().isEmpty()) {
-                                        Toast.makeText(context, t("name_error"), Toast.LENGTH_SHORT).show()
-                                    } else if (regPhoneInput.length != 11) {
-                                        Toast.makeText(context, t("phone_error"), Toast.LENGTH_SHORT).show()
-                                    } else if (!regEmailInput.contains("@") || !regEmailInput.contains(".")) {
-                                        Toast.makeText(context, t("email_error"), Toast.LENGTH_SHORT).show()
-                                    } else if (regPasswordInput.length < 6) {
-                                        Toast.makeText(context, t("password_error"), Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        viewModel.checkPhoneAvailable(regPhoneInput) { isAvailable, msg ->
-                                            if (isAvailable) {
-                                                val activity = context.findActivity()
-                                                if (activity != null) {
-                                                    viewModel.sendFirebasePhoneOtp(activity, regPhoneInput) { success, responseMsg ->
-                                                        Toast.makeText(context, responseMsg, Toast.LENGTH_LONG).show()
-                                                        if (success) {
-                                                            regOtpTimer = 60
-                                                            isRegisterOtpSent = true
-                                                        }
-                                                    }
-                                                } else {
-                                                    regOtpTimer = 60
-                                                    isRegisterOtpSent = true
-                                                }
-                                            } else {
-                                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text(t("send_otp"), fontWeight = FontWeight.Bold)
-                            }
-                        } else {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 12.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.Sms,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = "📩 Firebase OTP পাঠানো হয়েছে (+৮৮০ $regPhoneInput)",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        Surface(
-                                            color = if (regOtpTimer > 0) MaterialTheme.colorScheme.primary else Color.Red,
-                                            shape = RoundedCornerShape(12.dp)
-                                        ) {
-                                            Text(
-                                                text = if (regOtpTimer > 0) "⏱️ ${regOtpTimer}s" else "সময় শেষ",
-                                                color = Color.White,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Text(
-                                        text = "Firebase থেকে প্রাপ্ত ৬-ডিজিটের ওটিপি কোডটি টাইপ করে বসান।",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        OutlinedTextField(
+                            value = regPasswordInput,
+                            onValueChange = { regPasswordInput = it },
+                            label = { Text(t("password")) },
+                            placeholder = { Text(t("password_hint")) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            leadingIcon = { Icon(Icons.Default.Lock, null) },
+                            trailingIcon = {
+                                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = "Toggle password visibility"
                                     )
                                 }
-                            }
+                            },
+                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                            OutlinedTextField(
-                                value = regOtpInput,
-                                onValueChange = { if (it.length <= 6) regOtpInput = it },
-                                label = { Text("৬-ডিজিটের Firebase ওটিপি কোড লিখুন") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                leadingIcon = { Icon(Icons.Default.LockOpen, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                            Spacer(modifier = Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = regSellerCodeInput,
+                            onValueChange = { regSellerCodeInput = it },
+                            label = { Text(t("seller_code")) },
+                            placeholder = { Text(t("seller_code_hint")) },
+                            leadingIcon = { Icon(Icons.Default.GroupAdd, null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                            Button(
-                                onClick = {
-                                    viewModel.verifyFirebasePhoneOtp(regOtpInput) { verified, otpMsg ->
-                                        if (verified) {
-                                            viewModel.registerReseller(
-                                                name = regNameInput,
-                                                phone = regPhoneInput,
-                                                email = regEmailInput,
-                                                password = regPasswordInput,
-                                                sellerCode = regSellerCodeInput,
-                                                onResult = { success, msg ->
-                                                    if (success) {
-                                                        Toast.makeText(context, t("otp_verified"), Toast.LENGTH_SHORT).show()
-                                                        if (regSellerCodeInput.isNotEmpty()) {
-                                                            Toast.makeText(context, "Seller code applied! ৳৫০ referral reward added!", Toast.LENGTH_LONG).show()
-                                                        }
-                                                    } else {
-                                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                                    }
-                                                }
-                                            )
-                                        } else {
-                                            Toast.makeText(context, otpMsg, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text(t("register_btn"), fontWeight = FontWeight.Bold)
-                            }
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        val activity = context.findActivity()
-                                        if (activity != null) {
-                                            viewModel.sendFirebasePhoneOtp(activity, regPhoneInput) { success, responseMsg ->
-                                                Toast.makeText(context, responseMsg, Toast.LENGTH_LONG).show()
-                                                if (success) {
-                                                    regOtpTimer = 60
-                                                }
+                        Button(
+                            onClick = {
+                                if (regNameInput.trim().isEmpty()) {
+                                    Toast.makeText(context, t("name_error"), Toast.LENGTH_SHORT).show()
+                                } else if (regPhoneInput.length != 11) {
+                                    Toast.makeText(context, t("phone_error"), Toast.LENGTH_SHORT).show()
+                                } else if (!regEmailInput.contains("@") || !regEmailInput.contains(".")) {
+                                    Toast.makeText(context, t("email_error"), Toast.LENGTH_SHORT).show()
+                                } else if (regPasswordInput.length < 6) {
+                                    Toast.makeText(context, t("password_error"), Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.registerReseller(
+                                        name = regNameInput.trim(),
+                                        phone = regPhoneInput.trim(),
+                                        email = regEmailInput.trim(),
+                                        password = regPasswordInput.trim(),
+                                        sellerCode = regSellerCodeInput.trim(),
+                                        onResult = { success, msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                            if (success && regSellerCodeInput.isNotEmpty()) {
+                                                Toast.makeText(context, "Seller code applied! ৳৫০ referral reward added!", Toast.LENGTH_LONG).show()
                                             }
-                                        } else {
-                                            regOtpTimer = 60
                                         }
-                                    },
-                                    enabled = regOtpTimer == 0,
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text(
-                                        text = if (regOtpTimer == 0) "পুনরায় পাঠান" else "পুনরায় পাঠান (${regOtpTimer}s)",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
                                     )
                                 }
-
-                                OutlinedButton(
-                                    onClick = { isRegisterOtpSent = false },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("তথ্য সংশোধন", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("register_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(t("register_btn"), fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -2097,6 +1884,11 @@ fun HomeScreen(
                 }
             }
 
+            // Scrolling Marquee Headline Notice (Right under the Banner)
+            item {
+                RunningMarqueeHeadline(text = viewModel.runningHeadline)
+            }
+
             // Official Social Media & Community Channels Card
             item {
                 OfficialSocialChannelsCard(viewModel = viewModel)
@@ -2451,6 +2243,118 @@ fun ProductDetailsScreen(viewModel: MainViewModel, product: Product, t: (String)
                     contentDescription = "Back",
                     tint = Color.White
                 )
+            }
+
+            if (viewModel.userRole == "Admin" || viewModel.userRole == "SubAdmin") {
+                var showCancelModal by remember { mutableStateOf(false) }
+                var cancelReasonText by remember { mutableStateOf("") }
+
+                IconButton(
+                    onClick = {
+                        cancelReasonText = ""
+                        showCancelModal = true
+                    },
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .align(Alignment.TopEnd)
+                        .background(Color.Red.copy(alpha = 0.85f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Cancel Product",
+                        tint = Color.White
+                    )
+                }
+
+                if (showCancelModal) {
+                    val presetReasons = listOf(
+                        "স্টক শেষ / প্রোডাক্ট আউট অফ স্টক",
+                        "প্রোডাক্টের বিবরণ বা ছবি ভুল আছে",
+                        "পাইকারি দাম বা তথ্যে অমিল রয়েছে",
+                        "কোয়ালিটি সমস্যা / সাপ্লাই বন্ধ",
+                        "অন্যান্য কারণ"
+                    )
+                    AlertDialog(
+                        onDismissRequest = { showCancelModal = false },
+                        shape = RoundedCornerShape(16.dp),
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Cancel, contentDescription = null, tint = Color.Red, modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("প্রোডাক্ট বাতিলের কারণ", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            }
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(product.title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text("SKU: ${product.skuCode} | ৳${product.wholesalePrice.toInt()}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                Text("বাতিলের কারণ সিলেক্ট করুন অথবা নিচে লিখুন:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                presetReasons.forEach { preset ->
+                                    val isSelected = cancelReasonText == preset
+                                    OutlinedButton(
+                                        onClick = { cancelReasonText = preset },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                                        ),
+                                        border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(preset, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = cancelReasonText,
+                                    onValueChange = { cancelReasonText = it },
+                                    label = { Text("বাতিলের বিস্তারিত কারণ লিখুন *") },
+                                    placeholder = { Text("যেমন: স্টক শেষ হয়ে গেছে...") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    minLines = 2
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val finalReason = cancelReasonText.trim()
+                                    if (finalReason.isEmpty()) {
+                                        Toast.makeText(context, "অনুগ্রহ করে বাতিলের কারণ লিখে দিন!", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    viewModel.deleteProduct(product, finalReason) {
+                                        viewModel.selectedProduct = null
+                                        Toast.makeText(context, "❌ প্রোডাক্টটি সফলভাবে বাতিল করা হয়েছে!", Toast.LENGTH_LONG).show()
+                                        showCancelModal = false
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("বাতিল সাবমিট করুন", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showCancelModal = false }) {
+                                Text("ফিরে যান")
+                            }
+                        }
+                    )
+                }
             }
 
             if (galleryVideos.isNotEmpty()) {
@@ -2993,7 +2897,30 @@ fun CartScreen(viewModel: MainViewModel, t: (String) -> String) {
                             Spacer(modifier = Modifier.width(12.dp))
 
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(item.product.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        item.product.title,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.removeFromCart(item) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Remove item",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
                                 Text("SKU: ${item.product.skuCode} | ${item.selectedSize} | ${item.selectedColor}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -3084,6 +3011,50 @@ fun CartScreen(viewModel: MainViewModel, t: (String) -> String) {
 @Composable
 fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) -> String) {
     val context = LocalContext.current
+    val cartItems = viewModel.cartItems.value
+
+    BackHandler {
+        viewModel.activeRoute = "home"
+    }
+
+    if (cartItems.isEmpty()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.ShoppingCart,
+                contentDescription = "Empty Cart",
+                modifier = Modifier.size(72.dp),
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "আপনার কার্টটি খালি!",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "কোনো নতুন পণ্য নির্বাচন করে পুনরায় চেষ্টা করুন।",
+                fontSize = 14.sp,
+                color = Color.Gray,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = { viewModel.activeRoute = "home" },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("হোম পেজে ফিরে যান")
+            }
+        }
+        return
+    }
+
     val allOrders by viewModel.orders.collectAsState(initial = emptyList())
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
@@ -3095,18 +3066,20 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
     var thana by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var instructions by remember { mutableStateOf("") }
-    val enabledAdvanceGateways = remember(viewModel.isBkashAdvanceEnabled, viewModel.isNagadAdvanceEnabled, viewModel.isRocketAdvanceEnabled) {
+    val advancePaymentConfig = viewModel.getAdvancePaymentConfigForCart()
+    val enabledAdvanceGateways = remember(advancePaymentConfig) {
         buildList {
-            if (viewModel.isBkashAdvanceEnabled) add("bKash")
-            if (viewModel.isNagadAdvanceEnabled) add("Nagad")
-            if (viewModel.isRocketAdvanceEnabled) add("Rocket")
+            if (advancePaymentConfig.isBkashEnabled) add("bKash")
+            if (advancePaymentConfig.isNagadEnabled) add("Nagad")
+            if (advancePaymentConfig.isRocketEnabled) add("Rocket")
         }
     }
     var paymentType by remember { mutableStateOf(if (isFirstOrder) "Advance Delivery" else "COD") }
-    var paymentMethod by remember(enabledAdvanceGateways) { mutableStateOf(enabledAdvanceGateways.firstOrNull() ?: "") }
-    var showPaymentGateway by remember { mutableStateOf<String?>(null) }
+    var paymentMethod by remember(enabledAdvanceGateways) { mutableStateOf(enabledAdvanceGateways.firstOrNull() ?: "bKash") }
+    var senderNumberInput by remember { mutableStateOf("") }
+    var transactionIdInput by remember { mutableStateOf("") }
 
-    val deliveryCharge = if (district == "Inside Dhaka") viewModel.deliveryChargeInside else viewModel.deliveryChargeOutside
+    val deliveryCharge = if (district == "Inside Dhaka") viewModel.getDeliveryChargeInsideForCart() else viewModel.getDeliveryChargeOutsideForCart()
     val totalToPay = if (paymentType == "Full Advance") {
         viewModel.getCartTotalSelling() + deliveryCharge
     } else if (paymentType == "Advance Delivery") {
@@ -3176,11 +3149,6 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
             shape = RoundedCornerShape(8.dp)
         )
 
-        // Customer Order & Courier History Details
-        CustomerOrderHistoryCard(
-            phone = phone,
-            allOrders = allOrders
-        )
 
         OutlinedTextField(
             value = altPhone,
@@ -3291,7 +3259,7 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
             ) {
                 Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Inside Dhaka (ঢাকা জেলা)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("৳${viewModel.deliveryChargeInside.toInt()} TK", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                    Text("৳${viewModel.getDeliveryChargeInsideForCart().toInt()} TK", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
                 }
             }
 
@@ -3302,7 +3270,7 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
             ) {
                 Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Outside Dhaka (৬৩ জেলা)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("৳${viewModel.deliveryChargeOutside.toInt()} TK", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                    Text("৳${viewModel.getDeliveryChargeOutsideForCart().toInt()} TK", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
                 }
             }
         }
@@ -3360,7 +3328,7 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
                 }
             } else {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(t("payment_method"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("পেমেন্ট পদ্ধতি নির্বাচন করুন:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3390,85 +3358,159 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
                 }
 
                 val currentTargetNumber = when (paymentMethod) {
-                    "bKash" -> viewModel.bkashAdvanceNumber
-                    "Nagad" -> viewModel.nagadAdvanceNumber
-                    "Rocket" -> viewModel.rocketAdvanceNumber
-                    else -> ""
+                    "bKash" -> advancePaymentConfig.bkashNumber.ifEmpty { "01XXXXXXXXX" }
+                    "Nagad" -> advancePaymentConfig.nagadNumber.ifEmpty { "01XXXXXXXXX" }
+                    "Rocket" -> advancePaymentConfig.rocketNumber.ifEmpty { "01XXXXXXXXX" }
+                    else -> "01XXXXXXXXX"
                 }
 
-                // Payment Instructions Card
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Payment Instruction & Target Number Box
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "Send Money ৳${totalToPay.toInt()} to $currentTargetNumber (Personal $paymentMethod)",
+                            text = "$paymentMethod:",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.primary
+                            fontSize = 13.sp,
+                            color = when (paymentMethod) {
+                                "bKash" -> BkashPink
+                                "Nagad" -> NagadOrange
+                                else -> RocketPurple
+                            }
                         )
+                        Text(
+                            text = "Send Money করুন:",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "$currentTargetNumber (Personal $paymentMethod)",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    val clip = android.content.ClipData.newPlainText("Payment Number", currentTargetNumber)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "নম্বর কপি হয়েছে!", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy Number",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Once payment is verified, your order status will be updated to Confirmed.",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "পাঠানোর পরিমাণ: ৳${totalToPay.toInt()}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.secondary
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Condition 10 Notice Box
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "অনুগ্রহ করে নির্ধারিত নম্বরে শুধুমাত্র Send Money করুন। টাকা পাঠানোর পর Transaction ID এবং প্রেরকের মোবাইল নম্বর লিখে সাবমিট করুন। যাচাই সম্পন্ন হলে আপনার অর্ডার কনফার্ম করা হবে।",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Condition 3: Input for Transaction ID
+                OutlinedTextField(
+                    value = transactionIdInput,
+                    onValueChange = { transactionIdInput = it.trim() },
+                    label = { Text("Transaction ID লিখুন *") },
+                    placeholder = { Text("যেমন: 8N7A6X9P") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(imageVector = Icons.Default.Receipt, contentDescription = null)
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Condition 4: Input for Sender Phone Number
+                OutlinedTextField(
+                    value = senderNumberInput,
+                    onValueChange = { senderNumberInput = it.trim() },
+                    label = { Text("যে নম্বর থেকে টাকা পাঠিয়েছেন *") },
+                    placeholder = { Text("যেমন: 017XXXXXXXX") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone),
+                    leadingIcon = {
+                        Icon(imageVector = Icons.Default.Phone, contentDescription = null)
+                    }
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        val isSubmitting = viewModel.isSubmittingOrder
+
         Button(
             onClick = {
+                if (isSubmitting) return@Button
                 if (name.isNotEmpty() && phone.isNotEmpty() && address.isNotEmpty() && thana.isNotEmpty() && districtInput.isNotEmpty() && division.isNotEmpty()) {
-                    if (paymentType != "COD" && enabledAdvanceGateways.isEmpty()) {
-                        Toast.makeText(context, "অগ্রিম পেমেন্ট অপশনটি বর্তমানে বন্ধ আছে। দয়া করে ক্যাশ অন ডেলিভারি সিলেক্ট করুন।", Toast.LENGTH_LONG).show()
-                        return@Button
-                    }
                     if (paymentType != "COD") {
-                        showPaymentGateway = paymentMethod
-                    } else {
-                        val finalPhone = if (altPhone.isNotEmpty()) "$phone (বিকল্প: $altPhone)" else phone
-                        val finalAddress = "$address, জেলা: $districtInput, বিভাগ: $division"
-                        viewModel.checkout(
-                            customerName = name,
-                            customerPhone = finalPhone,
-                            district = district, // "Inside Dhaka" or "Outside Dhaka"
-                            thana = thana,
-                            fullAddress = finalAddress,
-                            deliveryInstructions = instructions,
-                            paymentType = paymentType,
-                            paymentMethod = "N/A",
-                            deliveryCharge = deliveryCharge,
-                            onSuccess = {
-                                Toast.makeText(context, "Order Placed Successfully!", Toast.LENGTH_LONG).show()
-                                viewModel.activeRoute = "orders"
-                            }
-                        )
+                        if (enabledAdvanceGateways.isEmpty()) {
+                            Toast.makeText(context, "অগ্রিম পেমেন্ট অপশনটি বর্তমানে বন্ধ আছে। দয়া করে ক্যাশ অন ডেলিভারি সিলেক্ট করুন।", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+                        if (transactionIdInput.isBlank() || senderNumberInput.isBlank()) {
+                            Toast.makeText(context, "অনুগ্রহ করে Transaction ID এবং যে নম্বর থেকে টাকা পাঠিয়েছেন তা লিখুন!", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
                     }
-                } else {
-                    Toast.makeText(context, "সবগুলো আবশ্যিক ফিল্ড পূরণ করুন! (নাম, মোবাইল নম্বর, বিভাগ, জেলা, থানা ও ঠিকানা)", Toast.LENGTH_LONG).show()
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text(t("place_order_btn"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        }
 
-        if (showPaymentGateway != null) {
-            SimulatedPaymentGatewayDialog(
-                gateway = showPaymentGateway!!,
-                amount = totalToPay,
-                onDismiss = { showPaymentGateway = null },
-                onSuccess = {
                     val finalPhone = if (altPhone.isNotEmpty()) "$phone (বিকল্প: $altPhone)" else phone
                     val finalAddress = "$address, জেলা: $districtInput, বিভাগ: $division"
+
                     viewModel.checkout(
                         customerName = name,
                         customerPhone = finalPhone,
@@ -3477,16 +3519,54 @@ fun CheckoutScreen(viewModel: MainViewModel, isFirstOrder: Boolean, t: (String) 
                         fullAddress = finalAddress,
                         deliveryInstructions = instructions,
                         paymentType = paymentType,
-                        paymentMethod = paymentMethod,
+                        paymentMethod = if (paymentType == "COD") "N/A" else paymentMethod,
+                        senderNumber = if (paymentType == "COD") "" else senderNumberInput,
+                        transactionId = if (paymentType == "COD") "" else transactionIdInput,
+                        paidAmount = totalToPay,
                         deliveryCharge = deliveryCharge,
                         onSuccess = {
-                            Toast.makeText(context, "Order Placed & Paid Successfully!", Toast.LENGTH_LONG).show()
-                            showPaymentGateway = null
-                            viewModel.activeRoute = "orders"
+                            name = ""
+                            phone = ""
+                            altPhone = ""
+                            division = ""
+                            districtInput = ""
+                            thana = ""
+                            address = ""
+                            instructions = ""
+                            senderNumberInput = ""
+                            transactionIdInput = ""
+
+                            Toast.makeText(context, "আপনার অর্ডার সফলভাবে গ্রহণ করা হয়েছে।", Toast.LENGTH_LONG).show()
+                            viewModel.selectedProduct = null
+                            viewModel.activeRoute = "home"
+                        },
+                        onError = { errorMsg ->
+                            Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
                         }
                     )
+                } else {
+                    Toast.makeText(context, "সবগুলো আবশ্যিক ফিল্ড পূরণ করুন! (নাম, মোবাইল নম্বর, বিভাগ, জেলা, থানা ও ঠিকানা)", Toast.LENGTH_LONG).show()
                 }
-            )
+            },
+            enabled = !isSubmitting,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            if (isSubmitting) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = Color.White,
+                        strokeWidth = 2.5.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("অর্ডার প্রসেস হচ্ছে...", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            } else {
+                Text(if (paymentType != "COD") "পেমেন্ট সাবমিট ও অর্ডার প্লেস করুন" else t("place_order_btn"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
         }
     }
 }
@@ -3546,6 +3626,27 @@ fun OrdersScreen(viewModel: MainViewModel, orders: List<Order>, t: (String) -> S
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(order.orderStatus, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (order.orderStatus == "Cancelled" && order.cancellationReason.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Cancel, contentDescription = null, tint = Color.Red, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text("বাতিলের কারণ (Cancellation Reason):", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Red)
+                                        Text(order.cancellationReason, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
                             }
                         }
 
@@ -3700,17 +3801,8 @@ fun OrdersScreen(viewModel: MainViewModel, orders: List<Order>, t: (String) -> S
                             if (isWithinOneHour) {
                                 Button(
                                     onClick = {
-                                        viewModel.updateOrderStatus(order.orderId, "Cancelled")
-                                        val isAdvance = order.paymentType == "Advance Delivery" || order.paymentType == "Full Advance" || order.paymentStatus == "Paid" || order.paymentStatus == "Pending Advance verification"
-                                        val refundAmt = if (isAdvance) {
-                                            if (order.paymentType == "Full Advance") order.totalSellingPrice + order.deliveryCharge else order.deliveryCharge
-                                        } else 0.0
-
-                                        if (refundAmt > 0) {
-                                            Toast.makeText(context, "অর্ডার বাতিল করা হয়েছে। অগ্রিম ৳${refundAmt.toInt()} টাকা আপনার ওয়ালেটে ফেরত দেওয়া হয়েছে।", Toast.LENGTH_LONG).show()
-                                        } else {
-                                            Toast.makeText(context, "আপনার অর্ডারটি সফলভাবে বাতিল করা হয়েছে।", Toast.LENGTH_SHORT).show()
-                                        }
+                                        viewModel.orderCancelReasonText = ""
+                                        viewModel.orderToCancel = order
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
@@ -4274,8 +4366,9 @@ fun LiveSupportScreen(viewModel: MainViewModel, t: (String) -> String) {
     var inputText by remember { mutableStateOf("") }
 
     val resellerPhone = viewModel.loggedInPhone
+
     val chatMessagesFlow = remember(resellerPhone) {
-        viewModel.getSupportMessagesForReseller(resellerPhone)
+        viewModel.getSupportMessagesForResellerAndAdmin(resellerPhone, "Admin")
     }
     val chatMessages by chatMessagesFlow.collectAsState(initial = emptyList())
 
@@ -4334,7 +4427,7 @@ fun LiveSupportScreen(viewModel: MainViewModel, t: (String) -> String) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -4345,13 +4438,13 @@ fun LiveSupportScreen(viewModel: MainViewModel, t: (String) -> String) {
                         .background(Color(0xFF22C55E), CircleShape)
                 )
                 Text(
-                    text = "এডমিন লাইভ সাপোর্ট চ্যাট",
+                    text = "মেইন এডমিন লাইভ সাপোর্ট চ্যাট",
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp
                 )
             }
-            Text("গোপন ও নিরাপদ চ্যাট", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("গোপন ও ব্যক্তিগত চ্যাট", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         // Chat Message Window
@@ -4372,7 +4465,7 @@ fun LiveSupportScreen(viewModel: MainViewModel, t: (String) -> String) {
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = "আসসালামু আলাইকুম! Reseller BD লাইভ সাপোর্টে আপনাকে স্বাগতম। আপনার যেকোনো প্রশ্ন বা সমস্যার কথা এখানে লিখুন, আমাদের এডমিন টিম শীঘ্রই সরাসরি মেসেজে উত্তর দেবেন।",
+                        text = "আসসালামু আলাইকুম! Reseller BD লাইভ সাপোর্টে আপনাকে স্বাগতম। আপনি মেইন এডমিনের সাথে কথা বলছেন। আপনার বার্তা শুধুমাত্র মেইন এডমিন দেখতে পাবেন।",
                         fontSize = 11.5.sp,
                         modifier = Modifier.padding(10.dp),
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -4447,7 +4540,7 @@ fun LiveSupportScreen(viewModel: MainViewModel, t: (String) -> String) {
                 IconButton(
                     onClick = {
                         if (inputText.trim().isNotEmpty()) {
-                            viewModel.sendResellerSupportMessage(inputText)
+                            viewModel.sendResellerSupportMessage(inputText, targetAdminKey = "Admin")
                             inputText = ""
                         }
                     },
@@ -4470,13 +4563,24 @@ fun AdminLiveChatScreen(
     resellers: List<ResellerUser>
 ) {
     val context = LocalContext.current
-    val allSupportMessages by viewModel.allSupportMessages.collectAsState()
+    val activeAdminKey = remember { viewModel.getActiveAdminKey() }
+    val supportMessagesFlow = remember(activeAdminKey) {
+        viewModel.getSupportMessagesForAdminKey(activeAdminKey)
+    }
+    val allSupportMessages by supportMessagesFlow.collectAsState(initial = emptyList())
+
+    val subAdminRequests by viewModel.subAdminRequests.collectAsState()
+    val approvedSubAdmins = remember(subAdminRequests) {
+        subAdminRequests.filter { it.status == "Approved" }
+    }
+
+    var selectedInboxType by remember { mutableStateOf("reseller") } // "reseller" or "subadmin"
 
     val messagesByPhone = remember(allSupportMessages) {
         allSupportMessages.groupBy { it.resellerPhone }
     }
 
-    val chatContacts = remember(messagesByPhone, resellers) {
+    val resellerContacts = remember(messagesByPhone, resellers) {
         val phonesWithMessages = messagesByPhone.keys
         val resellersFromDb = resellers.filter { it.phone in phonesWithMessages }
         val remainingResellers = resellers.filter { it.phone !in phonesWithMessages }
@@ -4494,13 +4598,27 @@ fun AdminLiveChatScreen(
         (resellersFromDb + unregisteredDummyList + remainingResellers).distinctBy { it.phone }
     }
 
+    val subAdminContacts = remember(approvedSubAdmins, viewModel.subAdminName, viewModel.subAdminPhone) {
+        val list = mutableListOf<ResellerUser>()
+        val defPhone = viewModel.subAdminPhone
+        list.add(ResellerUser(phone = defPhone, name = "🛡️ ${viewModel.subAdminName} (ডিফল্ট)", email = "subadmin@resellerbd.com"))
+        approvedSubAdmins.forEach { req ->
+            if (req.phone != defPhone && list.none { it.phone == req.phone }) {
+                list.add(ResellerUser(phone = req.phone, name = "🛡️ ${req.name}", email = req.email))
+            }
+        }
+        list.distinctBy { it.phone }
+    }
+
+    val chatContacts = if (selectedInboxType == "subadmin") subAdminContacts else resellerContacts
+
     var selectedResellerPhone by remember {
         mutableStateOf(chatContacts.firstOrNull()?.phone ?: "")
     }
 
-    LaunchedEffect(chatContacts) {
-        if (selectedResellerPhone.isEmpty() && chatContacts.isNotEmpty()) {
-            selectedResellerPhone = chatContacts.first().phone
+    LaunchedEffect(selectedInboxType, chatContacts) {
+        if (chatContacts.none { it.phone == selectedResellerPhone }) {
+            selectedResellerPhone = chatContacts.firstOrNull()?.phone ?: ""
         }
     }
 
@@ -4563,7 +4681,53 @@ fun AdminLiveChatScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Reseller vs Sub-Admin Tab Selector
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = selectedInboxType == "reseller",
+                onClick = { selectedInboxType = "reseller" },
+                label = {
+                    Text(
+                        text = "🛍️ রিসেলার মেসেজ (${resellerContacts.size})",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = RoyalBlue,
+                    selectedLabelColor = Color.White,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            )
+
+            FilterChip(
+                selected = selectedInboxType == "subadmin",
+                onClick = { selectedInboxType = "subadmin" },
+                label = {
+                    Text(
+                        text = "🛡️ সাব-এডমিন মেসেজ (${subAdminContacts.size})",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = RoyalBlue,
+                    selectedLabelColor = Color.White,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
 
         // Horizontal Resellers / Contacts Selector Row
         if (chatContacts.isNotEmpty()) {
@@ -4776,7 +4940,8 @@ fun AdminLiveChatScreen(
                                     viewModel.sendAdminSupportMessage(
                                         resellerPhone = activeSelectedReseller.phone,
                                         resellerName = activeSelectedReseller.name,
-                                        text = adminReplyText
+                                        text = adminReplyText,
+                                        adminKey = activeAdminKey
                                     )
                                     adminReplyText = ""
                                 }
@@ -4799,7 +4964,170 @@ fun AdminLiveChatScreen(
                     .padding(20.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("কোনো রিসেলার একাউন্ট পাওয়া যায়নি।", color = Color.Gray)
+                Text(
+                    text = if (selectedInboxType == "subadmin") "কোনো সাব-এডমিন একাউন্ট পাওয়া যায়নি।" else "কোনো রিসেলার একাউন্ট পাওয়া যায়নি।",
+                    color = Color.Gray
+                )
+            }
+        }
+    }
+}
+
+// ---------------- SUB-ADMIN LIVE CHAT WITH MAIN ADMIN ----------------
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SubAdminLiveChatScreen(
+    viewModel: MainViewModel
+) {
+    val context = LocalContext.current
+    val subAdminPhone = viewModel.loggedInPhone
+    val subAdminName = viewModel.loggedInName.ifEmpty { "সাব-এডমিন" }
+
+    val chatMessagesFlow = remember(subAdminPhone) {
+        viewModel.getSupportMessagesForResellerAndAdmin(subAdminPhone, "Admin")
+    }
+    val chatMessages by chatMessagesFlow.collectAsState(initial = emptyList())
+    var inputText by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(chatMessages.size) {
+        if (chatMessages.isNotEmpty()) {
+            listState.animateScrollToItem(chatMessages.size - 1)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+        // Banner Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("💬", fontSize = 20.sp)
+                    Text(
+                        text = "মেইন এডমিন লাইভ সাপোর্ট চ্যাট",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "আপনার এই বার্তাগুলো শুধু মেইন এডমিন দেখতে পাবেন। অন্য কোনো সাব-এডমিন বা রিসেলার দেখতে পাবে না।",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Message List Container
+        Card(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (chatMessages.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "মেইন এডমিনকে আপনার প্রশ্ন বা প্রয়োজন লিখে মেসেজ পাঠান।",
+                                fontSize = 12.sp,
+                                color = Color.Gray,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+
+                items(chatMessages) { msg ->
+                    val align = if (msg.isFromAdmin) Alignment.CenterStart else Alignment.CenterEnd
+                    val containerColor = if (msg.isFromAdmin) MaterialTheme.colorScheme.surfaceVariant else RoyalBlue
+                    val textColor = if (msg.isFromAdmin) MaterialTheme.colorScheme.onSurfaceVariant else Color.White
+                    val senderLabel = if (msg.isFromAdmin) "👑 মেইন এডমিন" else "আপনি ($subAdminName)"
+
+                    val timeStr = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(msg.timestamp))
+
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = align) {
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = containerColor),
+                            modifier = Modifier.widthIn(max = 280.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(
+                                    text = senderLabel,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (msg.isFromAdmin) RoyalBlue else Color.White.copy(alpha = 0.8f)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = msg.text,
+                                    fontSize = 12.sp,
+                                    color = textColor
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = timeStr,
+                                    fontSize = 8.5.sp,
+                                    color = if (msg.isFromAdmin) Color.Gray else Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.align(Alignment.End)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Input Field & Send Button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = { inputText = it },
+                placeholder = { Text("মেইন এডমিনকে মেসেজ লিখুন...", fontSize = 12.sp) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(20.dp)
+            )
+
+            Button(
+                onClick = {
+                    if (inputText.trim().isNotEmpty()) {
+                        viewModel.sendResellerSupportMessage(inputText, targetAdminKey = "Admin")
+                        inputText = ""
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
+                shape = RoundedCornerShape(20.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.Send, null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("প্রেরণ", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -4890,6 +5218,34 @@ fun AdminDashboardScreen(
     t: (String) -> String
 ) {
     val context = LocalContext.current
+    val currentAdminRole = viewModel.userRole
+    val currentAdminPhone = viewModel.loggedInPhone
+    val panelProducts = remember(products, currentAdminRole, currentAdminPhone) {
+        if (currentAdminRole == "SubAdmin") {
+            val normCurrent = viewModel.normalizePhoneNumber(currentAdminPhone)
+            products.filter { prod ->
+                prod.addedByRole == "SubAdmin" &&
+                (prod.addedByPhone.isBlank() || viewModel.normalizePhoneNumber(prod.addedByPhone) == normCurrent || prod.addedByPhone == currentAdminPhone)
+            }
+        } else if (currentAdminRole == "Admin") {
+            products.filter { it.addedByRole == "Admin" || it.addedByRole.isEmpty() }
+        } else {
+            products
+        }
+    }
+    val panelOrders = remember(orders, currentAdminRole, currentAdminPhone) {
+        if (currentAdminRole == "SubAdmin") {
+            val normCurrent = viewModel.normalizePhoneNumber(currentAdminPhone)
+            orders.filter { order ->
+                order.adminRole == "SubAdmin" &&
+                (order.adminPhone.isBlank() || viewModel.normalizePhoneNumber(order.adminPhone) == normCurrent || order.adminPhone == currentAdminPhone)
+            }
+        } else if (currentAdminRole == "Admin") {
+            orders.filter { it.adminRole == "Admin" || it.adminRole.isEmpty() }
+        } else {
+            orders
+        }
+    }
     var activeAdminTab by remember { mutableStateOf("products") } // "products", "orders", "withdrawals"
     var selectedAdminOrderForDetail by remember { mutableStateOf<Order?>(null) }
 
@@ -4938,6 +5294,10 @@ fun AdminDashboardScreen(
     var newSubcatIconInput by remember { mutableStateOf("") }
     var subcatPickerTargetIndex by remember { mutableStateOf<Int?>(null) }
     var isSubcatPickerForNew by remember { mutableStateOf(false) }
+
+    // Product Cancellation Reason Dialog State
+    var productToCancel by remember { mutableStateOf<Product?>(null) }
+    var cancellationReasonText by remember { mutableStateOf("") }
 
     val editCatImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -5042,7 +5402,7 @@ fun AdminDashboardScreen(
                 ),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text("Orders (${orders.size})", fontSize = 11.sp)
+                Text("Orders (${panelOrders.size})", fontSize = 11.sp)
             }
 
             Button(
@@ -5087,7 +5447,7 @@ fun AdminDashboardScreen(
                 ),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text("Live Chat 💬", fontSize = 11.sp)
+                Text(if (currentAdminRole == "SubAdmin") "এডমিন চ্যাট 💬" else "Live Chat 💬", fontSize = 11.sp)
             }
 
             Button(
@@ -5112,29 +5472,82 @@ fun AdminDashboardScreen(
                 Text("Settings", fontSize = 11.sp)
             }
 
-            Button(
-                onClick = { activeAdminTab = "subadmin_requests" },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (activeAdminTab == "subadmin_requests") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = if (activeAdminTab == "subadmin_requests") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
-                ),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                val subReqs by viewModel.subAdminRequests.collectAsState()
-                val pendSub = subReqs.count { it.status == "Pending" }
-                Text("Sub-Admin Requests ($pendSub)", fontSize = 11.sp)
+            if (viewModel.userRole == "Admin") {
+                Button(
+                    onClick = { activeAdminTab = "subadmin_requests" },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (activeAdminTab == "subadmin_requests") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (activeAdminTab == "subadmin_requests") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    val subReqs by viewModel.subAdminRequests.collectAsState()
+                    val pendSub = subReqs.count { it.status == "Pending" }
+                    Text("Sub-Admin Requests ($pendSub)", fontSize = 11.sp)
+                }
             }
 
-            Button(
-                onClick = { activeAdminTab = "payment_settings" },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (activeAdminTab == "payment_settings") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = if (activeAdminTab == "payment_settings") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
-                ),
+            if (currentAdminRole == "Admin") {
+                Button(
+                    onClick = { activeAdminTab = "payment_settings" },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (activeAdminTab == "payment_settings") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (activeAdminTab == "payment_settings") Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Payment Methods 💳", fontSize = 11.sp)
+                }
+            }
+        }
+
+        // Sub-Admin Hotline Helpline Banner
+        if (currentAdminRole == "SubAdmin" && viewModel.hotlineNumber.isNotBlank()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text("Payment Methods 💳", fontSize = 11.sp)
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("📞", fontSize = 18.sp)
+                        Column {
+                            Text(
+                                text = "মেইন এডমিন হটলাইন নম্বর",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = viewModel.hotlineNumber,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = RoyalBlue
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${viewModel.hotlineNumber}"))
+                            context.startActivity(intent)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Call, null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("কল দিন", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
+            Spacer(modifier = Modifier.height(4.dp))
         }
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -5145,14 +5558,24 @@ fun AdminDashboardScreen(
             }
 
             "payment_settings" -> {
-                AdminPaymentSettingsScreen(viewModel = viewModel)
+                if (currentAdminRole == "Admin") {
+                    AdminPaymentSettingsScreen(viewModel = viewModel)
+                }
             }
             "tutorials" -> {
-                AdminTutorialVideosScreen(viewModel = viewModel)
+                if (currentAdminRole == "SubAdmin") {
+                    TutorialCenterScreen(viewModel = viewModel, t = { it })
+                } else {
+                    AdminTutorialVideosScreen(viewModel = viewModel)
+                }
             }
 
             "chat" -> {
-                AdminLiveChatScreen(viewModel = viewModel, resellers = resellers)
+                if (currentAdminRole == "SubAdmin") {
+                    SubAdminLiveChatScreen(viewModel = viewModel)
+                } else {
+                    AdminLiveChatScreen(viewModel = viewModel, resellers = resellers)
+                }
             }
 
             "products" -> {
@@ -5257,17 +5680,18 @@ fun AdminDashboardScreen(
                                 }
                             }
 
-                            // Add New Category Toggle Button
-                            TextButton(
-                                onClick = { showAddCategoryCard = !showAddCategoryCard },
-                                modifier = Modifier.align(Alignment.End)
-                            ) {
-                                Icon(if (showAddCategoryCard) Icons.Default.RemoveCircle else Icons.Default.AddCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (showAddCategoryCard) "বন্ধ করুন" else "➕ নতুন ক্যাটাগরি এড করুন (Add New Category)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
+                            // Add New Category Toggle Button (Main Admin only)
+                            if (currentAdminRole == "Admin") {
+                                TextButton(
+                                    onClick = { showAddCategoryCard = !showAddCategoryCard },
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Icon(if (showAddCategoryCard) Icons.Default.RemoveCircle else Icons.Default.AddCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (showAddCategoryCard) "বন্ধ করুন" else "➕ নতুন ক্যাটাগরি এড করুন (Add New Category)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
 
-                            if (showAddCategoryCard) {
+                                if (showAddCategoryCard) {
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                     shape = RoundedCornerShape(10.dp),
@@ -5372,6 +5796,7 @@ fun AdminDashboardScreen(
                                     }
                                 }
                             }
+                        }
                         }
                     }
 
@@ -5704,7 +6129,7 @@ fun AdminDashboardScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "📦 আপলোডকৃত প্রোডাক্ট সমূহের তালিকা (${products.size} টি প্রোডাক্ট):",
+                        text = "📦 আপলোডকৃত প্রোডাক্ট সমূহের তালিকা (${panelProducts.size} টি প্রোডাক্ট):",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -5805,11 +6230,11 @@ fun AdminDashboardScreen(
                                 selected = adminListCategoryFilter == "সব",
                                 onClick = { adminListCategoryFilter = "সব" },
                                 leadingIcon = { Icon(Icons.Default.ShoppingBag, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text("সব (${products.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                                label = { Text("সব (${panelProducts.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                             )
                         }
                         items(adminCategoriesList) { cat ->
-                            val cCount = products.count { it.category == cat.name || it.title.contains(cat.name) }
+                            val cCount = panelProducts.count { it.category == cat.name || it.title.contains(cat.name) }
                             FilterChip(
                                 selected = adminListCategoryFilter == cat.name,
                                 onClick = { adminListCategoryFilter = cat.name },
@@ -5819,7 +6244,7 @@ fun AdminDashboardScreen(
                         }
                     }
 
-                    val filteredAdminProds = products.filter { prod ->
+                    val filteredAdminProds = panelProducts.filter { prod ->
                         val matchesCategory = adminListCategoryFilter == "সব" ||
                                 prod.category == adminListCategoryFilter ||
                                 prod.title.contains(adminListCategoryFilter) ||
@@ -5944,13 +6369,13 @@ fun AdminDashboardScreen(
                                         }
                                         IconButton(
                                             onClick = {
-                                                viewModel.deleteProduct(prod)
-                                                Toast.makeText(context, "প্রোডাক্ট সফলভাবে মুছে ফেলা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                                cancellationReasonText = ""
+                                                productToCancel = prod
                                             }
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
-                                                contentDescription = "Delete Product",
+                                                contentDescription = "Delete/Cancel Product",
                                                 tint = Color.Red
                                             )
                                         }
@@ -5979,22 +6404,28 @@ fun AdminDashboardScreen(
                     ) {
                         Column {
                             Text("📂 ক্যাটাগরি ম্যানেজমেন্ট (${adminCategoriesList.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
-                            Text("নাম ও ছবি পরিবর্তন করতে 'সম্পাদনা' বাটনে চাপুন", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (currentAdminRole == "Admin") {
+                                Text("নাম ও ছবি পরিবর্তন করতে 'সম্পাদনা' বাটনে চাপুন", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                Text("সকল প্রোডাক্ট ক্যাটাগরির তালিকা", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
 
-                        Button(
-                            onClick = { showAddCategoryCard = !showAddCategoryCard },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (showAddCategoryCard) "বন্ধ করুন" else "নতুন ক্যাটাগরি", fontSize = 11.sp)
+                        if (currentAdminRole == "Admin") {
+                            Button(
+                                onClick = { showAddCategoryCard = !showAddCategoryCard },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (showAddCategoryCard) "বন্ধ করুন" else "নতুন ক্যাটাগরি", fontSize = 11.sp)
+                            }
                         }
                     }
 
-                    // Add Category Section
-                    AnimatedVisibility(visible = showAddCategoryCard) {
+                    // Add Category Section (Main Admin only)
+                    AnimatedVisibility(visible = currentAdminRole == "Admin" && showAddCategoryCard) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
@@ -6219,8 +6650,8 @@ fun AdminDashboardScreen(
                         }
                     }
 
-                    // Edit Category Dialog/Card
-                    if (editingCategoryItem != null) {
+                    // Edit Category Dialog/Card (Main Admin only)
+                    if (currentAdminRole == "Admin" && editingCategoryItem != null) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
@@ -6510,30 +6941,32 @@ fun AdminDashboardScreen(
                                         }
                                     }
 
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        // Edit Category Button
-                                        IconButton(
-                                            onClick = {
-                                                editingCategoryItem = cat
-                                                editCatNameInput = cat.name
-                                                editCatIconInput = cat.icon
-                                                editCatSubcatsInput = cat.subcategories
-                                                editSubcatList = parseSubcategories(cat.subcategories)
-                                                newSubcatNameInput = ""
-                                                newSubcatIconInput = ""
+                                    if (currentAdminRole == "Admin") {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            // Edit Category Button
+                                            IconButton(
+                                                onClick = {
+                                                    editingCategoryItem = cat
+                                                    editCatNameInput = cat.name
+                                                    editCatIconInput = cat.icon
+                                                    editCatSubcatsInput = cat.subcategories
+                                                    editSubcatList = parseSubcategories(cat.subcategories)
+                                                    newSubcatNameInput = ""
+                                                    newSubcatIconInput = ""
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = "Edit Category", tint = MaterialTheme.colorScheme.primary)
                                             }
-                                        ) {
-                                            Icon(Icons.Default.Edit, contentDescription = "Edit Category", tint = MaterialTheme.colorScheme.primary)
-                                        }
 
-                                        // Delete Category Button
-                                        IconButton(
-                                            onClick = {
-                                                viewModel.deleteCategory(cat)
-                                                Toast.makeText(context, "ক্যাটাগরি মুছে ফেলা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                            // Delete Category Button
+                                            IconButton(
+                                                onClick = {
+                                                    viewModel.deleteCategory(cat)
+                                                    Toast.makeText(context, "ক্যাটাগরি মুছে ফেলা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = "Delete Category", tint = Color.Red)
                                             }
-                                        ) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete Category", tint = Color.Red)
                                         }
                                     }
                                 }
@@ -6576,7 +7009,7 @@ fun AdminDashboardScreen(
 
             "orders" -> {
                 // Manage Orders Layout
-                if (orders.isEmpty()) {
+                if (panelOrders.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No orders placed yet.")
                     }
@@ -6587,7 +7020,7 @@ fun AdminDashboardScreen(
                             .padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(orders) { order ->
+                        items(panelOrders) { order ->
                             var trackNumInput by remember { mutableStateOf(order.trackingNumber) }
                             var trackLinkInput by remember { mutableStateOf(order.trackingLink) }
 
@@ -6604,6 +7037,26 @@ fun AdminDashboardScreen(
                                         Text("Status: ${order.orderStatus}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                     }
 
+                                    if (order.orderStatus == "Cancelled" && order.cancellationReason.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f))
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(Icons.Default.Cancel, contentDescription = null, tint = Color.Red, modifier = Modifier.size(18.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Column {
+                                                    Text("বাতিলের কারণ (Cancellation Reason):", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.Red)
+                                                    Text(order.cancellationReason, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text("Customer: ${order.customerName} (${order.customerPhone})", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                     Text("Shipping Area: ${order.district}", fontSize = 12.sp)
@@ -6615,7 +7068,29 @@ fun AdminDashboardScreen(
                                     Text("Total Customer Due: ৳${(order.totalSellingPrice + order.deliveryCharge).toInt()}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     Text("Wholesale Cost: ৳${order.totalWholesalePrice.toInt()} | Reseller Profit: ৳${order.calculatedProfit.toInt()}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text("Type: ${order.paymentType} | Gateway: ${order.paymentMethod}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("Payment Status: ${order.paymentStatus}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF58220))
+                                    if (order.senderNumber.isNotEmpty() || order.transactionId.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp)) {
+                                                Text("💳 ম্যানুয়াল পেমেন্ট তথ্য:", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                                if (order.senderNumber.isNotEmpty()) {
+                                                    Text("প্রেরকের নম্বর: ${order.senderNumber}", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                                if (order.transactionId.isNotEmpty()) {
+                                                    Text("Transaction ID: ${order.transactionId}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
+                                                }
+                                                if (order.paidAmount > 0) {
+                                                    Text("পেমেন্ট পরিমাণ: ৳${order.paidAmount.toInt()}", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                                Text("পেমেন্ট স্ট্যাটাস: ${order.paymentStatus}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (order.paymentStatus == "Paid") ForestGreen else Color(0xFFF58220))
+                                            }
+                                        }
+                                    } else {
+                                        Text("Payment Status: ${order.paymentStatus}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF58220))
+                                    }
 
                                     if (order.productInfo.isNotEmpty()) {
                                         Spacer(modifier = Modifier.height(6.dp))
@@ -6756,8 +7231,8 @@ fun AdminDashboardScreen(
                                     ) {
                                         Button(
                                             onClick = {
-                                                viewModel.updateOrderPaymentStatus(order.orderId, "Paid")
-                                                Toast.makeText(context, "Payment marked as Paid", Toast.LENGTH_SHORT).show()
+                                                viewModel.verifyOrderPayment(order.orderId)
+                                                Toast.makeText(context, "✅ পেমেন্ট ভেরিফাই করে অর্ডার কনফার্ম করা হয়েছে!", Toast.LENGTH_SHORT).show()
                                             },
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(6.dp),
@@ -6780,8 +7255,8 @@ fun AdminDashboardScreen(
 
                                         Button(
                                             onClick = {
-                                                viewModel.updateOrderStatus(order.orderId, "Cancelled")
-                                                Toast.makeText(context, "Order Cancelled", Toast.LENGTH_SHORT).show()
+                                                viewModel.orderCancelReasonText = ""
+                                                viewModel.orderToCancel = order
                                             },
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(6.dp),
@@ -6993,16 +7468,16 @@ fun AdminDashboardScreen(
 
             "settings" -> {
                 val banners by viewModel.banners.collectAsState()
-                var insideInput by remember { mutableStateOf(viewModel.deliveryChargeInside.toString()) }
-                var outsideInput by remember { mutableStateOf(viewModel.deliveryChargeOutside.toString()) }
+                var insideInput by remember(viewModel.deliveryChargeInside, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.deliveryChargeInside.toString()) }
+                var outsideInput by remember(viewModel.deliveryChargeOutside, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.deliveryChargeOutside.toString()) }
 
-                var bkashNum by remember { mutableStateOf(viewModel.bkashAdvanceNumber) }
-                var nagadNum by remember { mutableStateOf(viewModel.nagadAdvanceNumber) }
-                var rocketNum by remember { mutableStateOf(viewModel.rocketAdvanceNumber) }
+                var bkashNum by remember(viewModel.bkashAdvanceNumber, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.bkashAdvanceNumber) }
+                var nagadNum by remember(viewModel.nagadAdvanceNumber, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.nagadAdvanceNumber) }
+                var rocketNum by remember(viewModel.rocketAdvanceNumber, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.rocketAdvanceNumber) }
 
-                var isBkashOn by remember { mutableStateOf(viewModel.isBkashAdvanceEnabled) }
-                var isNagadOn by remember { mutableStateOf(viewModel.isNagadAdvanceEnabled) }
-                var isRocketOn by remember { mutableStateOf(viewModel.isRocketAdvanceEnabled) }
+                var isBkashOn by remember(viewModel.isBkashAdvanceEnabled, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.isBkashAdvanceEnabled) }
+                var isNagadOn by remember(viewModel.isNagadAdvanceEnabled, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.isNagadAdvanceEnabled) }
+                var isRocketOn by remember(viewModel.isRocketAdvanceEnabled, viewModel.userRole, viewModel.loggedInPhone) { mutableStateOf(viewModel.isRocketAdvanceEnabled) }
 
                 var fbPageInput by remember { mutableStateOf(viewModel.facebookPageUrl) }
                 var tiktokInput by remember { mutableStateOf(viewModel.tiktokIdUrl) }
@@ -7039,350 +7514,422 @@ fun AdminDashboardScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
 
-                    // Promotional Banner Management Card (Admin Option)
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    // Marquee Headline Notice Card (Only Main Admin Option)
+                    if (currentAdminRole == "Admin") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.ViewCarousel,
-                                    contentDescription = null,
-                                    tint = RoyalBlue
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Campaign,
+                                        contentDescription = null,
+                                        tint = RoyalBlue
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "স্ক্রলিং হেডলাইন নোটিশ (Marquee Headline)",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "হোম পেজে ব্যানারের নিচে ডান থেকে বামে স্ক্রল হওয়া নোটিশ বার্তা (শুধুমাত্র মেইন এডমিন)",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                var headlineInput by remember(viewModel.runningHeadline) { mutableStateOf(viewModel.runningHeadline) }
+
+                                OutlinedTextField(
+                                    value = headlineInput,
+                                    onValueChange = { headlineInput = it },
+                                    label = { Text("স্ক্রলিং হেডলাইন নোটিশ বার্তা") },
+                                    placeholder = { Text("বাংলাদেশ সর্ববৃহৎ ড্রপশিপিং রিসেলার বিডিতে আপনাকে স্বাগতম ।") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    maxLines = 3
                                 )
-                                Column {
-                                    Text(
-                                        text = "রিসেলার প্যানেল প্রমোশনাল ব্যানার (Banner Settings)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "গ্যালারি থেকে ফটো বা লিংক দিয়ে ব্যানার চেঞ্জ করুন। নতুন ব্যানার আপলোড দিলে আগেরটি ডিলিট হয়ে অটো-রিপ্লেস হবে।",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+
+                                Button(
+                                    onClick = {
+                                        if (headlineInput.isNotBlank()) {
+                                            viewModel.updateRunningHeadline(headlineInput)
+                                            Toast.makeText(context, "স্ক্রলিং হেডলাইন নোটিশ সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "দয়া করে হেডলাইন বার্তাটি লিখুন!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("হেডলাইন আপডেট করুন", fontWeight = FontWeight.Bold)
                                 }
                             }
+                        }
+                    }
 
-                            // Active Banner Preview
-                            val currentBannerUrl = banners.firstOrNull()?.imageUrl ?: ""
-                            val previewModel: Any = if (bannerUrlInput.isNotEmpty()) bannerUrlInput else if (currentBannerUrl.isNotEmpty()) currentBannerUrl else com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_banner_1784804734464
-
-                            Text("বর্তমান এক্টিভ ব্যানার প্রিভিউ:", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(2.1f),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                    // Promotional Banner Management Card (Only Main Admin Option)
+                    if (currentAdminRole == "Admin") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                AsyncImage(
-                                    model = previewModel,
-                                    contentDescription = "Banner Preview",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ViewCarousel,
+                                        contentDescription = null,
+                                        tint = RoyalBlue
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "রিসেলার প্যানেল প্রমোশনাল ব্যানার (Banner Settings)",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "গ্যালারি থেকে ফটো বা লিংক দিয়ে ব্যানার চেঞ্জ করুন। নতুন ব্যানার আপলোড দিলে আগেরটি ডিলিট হয়ে অটো-রিপ্লেস হবে।",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                // Active Banner Preview
+                                val currentBannerUrl = banners.firstOrNull()?.imageUrl ?: ""
+                                val previewModel: Any = if (bannerUrlInput.isNotEmpty()) bannerUrlInput else if (currentBannerUrl.isNotEmpty()) currentBannerUrl else com.aistudio.resellerbd.vpxgcl.R.drawable.reseller_bd_banner_1784804734464
+
+                                Text("বর্তমান এক্টিভ ব্যানার প্রিভিউ:", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(2.1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                                ) {
+                                    AsyncImage(
+                                        model = previewModel,
+                                        contentDescription = "Banner Preview",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = { bannerImagePicker.launch("image/*") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("📸 গ্যালারি থেকে ব্যানার সিলেক্ট করুন", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                OutlinedTextField(
+                                    value = bannerUrlInput,
+                                    onValueChange = { bannerUrlInput = it },
+                                    label = { Text("অথবা ব্যানার ফটো ইউআরএল (Image URL)") },
+                                    placeholder = { Text("https://example.com/banner.jpg") },
+                                    leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = RoyalBlue) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
                                 )
-                            }
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
                                 Button(
-                                    onClick = { bannerImagePicker.launch("image/*") },
+                                    onClick = {
+                                        if (bannerUrlInput.trim().isNotEmpty()) {
+                                            viewModel.updateActiveBanner(bannerUrlInput.trim())
+                                            Toast.makeText(context, "নতুন প্রমোশনাল ব্যানার সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "অনুগ্রহ করে গ্যালারি থেকে ছবি সিলেক্ট করুন বা ইউআরএল দিন!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("💾 নতুন ব্যানার সেভ ও সার্ভিস আপডেট করুন", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    // Support Helpline / Hotline Card (Main Admin Only)
+                    if (currentAdminRole == "Admin") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Call,
+                                        contentDescription = null,
+                                        tint = RoyalBlue
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "হটলাইন সাপোর্ট হেল্পলাইন নম্বর (Hotline Number)",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "রিসেলার প্যানেলে 'Call Helpline' ক্লিক করলে এই নম্বরে কল যাবে",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                OutlinedTextField(
+                                    value = hotlineInput,
+                                    onValueChange = { hotlineInput = it },
+                                    label = { Text("হটলাইন সাপোর্ট মোবাইল নম্বর") },
+                                    placeholder = { Text("যেমন: 09612345678 বা 01700000000") },
+                                    leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, tint = RoyalBlue) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+
+                                Button(
+                                    onClick = {
+                                        viewModel.hotlineNumber = hotlineInput.trim()
+                                        Toast.makeText(context, "হটলাইন নম্বর সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("📸 গ্যালারি থেকে ব্যানার সিলেক্ট করুন", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    Text("হটলাইন নম্বর সংরক্ষণ করুন (Save Hotline)", fontWeight = FontWeight.Bold)
                                 }
-                            }
-
-                            OutlinedTextField(
-                                value = bannerUrlInput,
-                                onValueChange = { bannerUrlInput = it },
-                                label = { Text("অথবা ব্যানার ফটো ইউআরএল (Image URL)") },
-                                placeholder = { Text("https://example.com/banner.jpg") },
-                                leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = RoyalBlue) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            Button(
-                                onClick = {
-                                    if (bannerUrlInput.trim().isNotEmpty()) {
-                                        viewModel.updateActiveBanner(bannerUrlInput.trim())
-                                        Toast.makeText(context, "নতুন প্রমোশনাল ব্যানার সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "অনুগ্রহ করে গ্যালারি থেকে ছবি সিলেক্ট করুন বা ইউআরএল দিন!", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("💾 নতুন ব্যানার সেভ ও সার্ভিস আপডেট করুন", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
 
-                    // Support Helpline / Hotline Card
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    // Official Social Media Channels Card (Main Admin Configurable Only)
+                    if (currentAdminRole == "Admin") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Call,
-                                    contentDescription = null,
-                                    tint = RoyalBlue
-                                )
-                                Column {
-                                    Text(
-                                        text = "হটলাইন সাপোর্ট হেল্পলাইন নম্বর (Hotline Number)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "রিসেলার প্যানেলে 'Call Helpline' ক্লিক করলে এই নম্বরে কল যাবে",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-
-                            OutlinedTextField(
-                                value = hotlineInput,
-                                onValueChange = { hotlineInput = it },
-                                label = { Text("হটলাইন সাপোর্ট মোবাইল নম্বর") },
-                                placeholder = { Text("যেমন: 09612345678 বা 01700000000") },
-                                leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, tint = RoyalBlue) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            Button(
-                                onClick = {
-                                    viewModel.hotlineNumber = hotlineInput.trim()
-                                    Toast.makeText(context, "হটলাইন নম্বর সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("হটলাইন নম্বর সংরক্ষণ করুন (Save Hotline)", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    // Official Social Media Channels Card (Admin Configurable)
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Public,
-                                    contentDescription = null,
-                                    tint = RoyalBlue
-                                )
-                                Column {
-                                    Text(
-                                        text = "অফিসিয়াল সোশ্যাল মিডিয়া ও চ্যানেল লিঙ্কস",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "রিসেলার প্যানেলে দেখানোর জন্য আপনার লিঙ্কগুলো নিচে সেট করুন",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-
-                            OutlinedTextField(
-                                value = fbPageInput,
-                                onValueChange = { fbPageInput = it },
-                                label = { Text("ফেসবুক পেজ লিঙ্ক (Facebook Page URL)") },
-                                placeholder = { Text("https://facebook.com/yourpage") },
-                                leadingIcon = { SocialPlatformLogo(url = fbPageInput, platform = "FACEBOOK", size = 20.dp) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            OutlinedTextField(
-                                value = tiktokInput,
-                                onValueChange = { tiktokInput = it },
-                                label = { Text("টিকটক আইডি লিঙ্ক (TikTok ID URL)") },
-                                placeholder = { Text("https://tiktok.com/@youraccount") },
-                                leadingIcon = { SocialPlatformLogo(url = tiktokInput, platform = "TIKTOK", size = 20.dp) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            OutlinedTextField(
-                                value = ytInput,
-                                onValueChange = { ytInput = it },
-                                label = { Text("ইউটিউব চ্যানেল লিঙ্ক (YouTube Channel URL)") },
-                                placeholder = { Text("https://youtube.com/@yourchannel") },
-                                leadingIcon = { SocialPlatformLogo(url = ytInput, platform = "YOUTUBE", size = 20.dp) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            OutlinedTextField(
-                                value = tgInput,
-                                onValueChange = { tgInput = it },
-                                label = { Text("টেলিগ্রাম চ্যানেল লিঙ্ক (Telegram Channel URL)") },
-                                placeholder = { Text("https://t.me/yourchannel") },
-                                leadingIcon = { SocialPlatformLogo(url = tgInput, platform = "TELEGRAM", size = 20.dp) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            Button(
-                                onClick = {
-                                    viewModel.facebookPageUrl = fbPageInput
-                                    viewModel.tiktokIdUrl = tiktokInput
-                                    viewModel.youtubeChannelUrl = ytInput
-                                    viewModel.telegramChannelUrl = tgInput
-                                    Toast.makeText(context, "সোশ্যাল মিডিয়া লিঙ্কসমূহ সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_LONG).show()
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("সোশ্যাল চ্যানেল লিঙ্কসমূহ সংরক্ষণ করুন (Save Links)", fontWeight = FontWeight.Bold)
-                            }
-
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "অন্যান্য কাস্টম সোশ্যাল চ্যানেল সমূহ",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                    Text(
-                                        text = "WhatsApp, Instagram, Website ইত্যাদি অটো-লোগো সহ যুক্ত করুন",
-                                        fontSize = 10.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Button(
-                                    onClick = { showAddChannelDialog = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("নতুন চ্যানেল", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Icon(
+                                        imageVector = Icons.Default.Public,
+                                        contentDescription = null,
+                                        tint = RoyalBlue
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "অফিসিয়াল সোশ্যাল মিডিয়া ও চ্যানেল লিঙ্কস",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "রিসেলার প্যানেলে দেখানোর জন্য আপনার লিঙ্কগুলো নিচে সেট করুন",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
-                            }
 
-                            if (customChannels.isEmpty()) {
-                                Text(
-                                    text = "এখনো কোনো অতিরিক্ত কাস্টম সোশ্যাল চ্যানেল যোগ করা হয়নি। 'নতুন চ্যানেল' বাটনে চাপ দিয়ে যোগ করুন।",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                OutlinedTextField(
+                                    value = fbPageInput,
+                                    onValueChange = { fbPageInput = it },
+                                    label = { Text("ফেসবুক পেজ লিঙ্ক (Facebook Page URL)") },
+                                    placeholder = { Text("https://facebook.com/yourpage") },
+                                    leadingIcon = { SocialPlatformLogo(url = fbPageInput, platform = "FACEBOOK", size = 20.dp) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
                                 )
-                            } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    customChannels.forEach { channel ->
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(10.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
+
+                                OutlinedTextField(
+                                    value = tiktokInput,
+                                    onValueChange = { tiktokInput = it },
+                                    label = { Text("টিকটক আইডি লিঙ্ক (TikTok ID URL)") },
+                                    placeholder = { Text("https://tiktok.com/@youraccount") },
+                                    leadingIcon = { SocialPlatformLogo(url = tiktokInput, platform = "TIKTOK", size = 20.dp) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+
+                                OutlinedTextField(
+                                    value = ytInput,
+                                    onValueChange = { ytInput = it },
+                                    label = { Text("ইউটিউব চ্যানেল লিঙ্ক (YouTube Channel URL)") },
+                                    placeholder = { Text("https://youtube.com/@yourchannel") },
+                                    leadingIcon = { SocialPlatformLogo(url = ytInput, platform = "YOUTUBE", size = 20.dp) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+
+                                OutlinedTextField(
+                                    value = tgInput,
+                                    onValueChange = { tgInput = it },
+                                    label = { Text("টেলিগ্রাম চ্যানেল লিঙ্ক (Telegram Channel URL)") },
+                                    placeholder = { Text("https://t.me/yourchannel") },
+                                    leadingIcon = { SocialPlatformLogo(url = tgInput, platform = "TELEGRAM", size = 20.dp) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+
+                                Button(
+                                    onClick = {
+                                        viewModel.facebookPageUrl = fbPageInput
+                                        viewModel.tiktokIdUrl = tiktokInput
+                                        viewModel.youtubeChannelUrl = ytInput
+                                        viewModel.telegramChannelUrl = tgInput
+                                        Toast.makeText(context, "সোশ্যাল মিডিয়া লিঙ্কসমূহ সফলভাবে আপডেট করা হয়েছে!", Toast.LENGTH_LONG).show()
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("সোশ্যাল চ্যানেল লিঙ্কসমূহ সংরক্ষণ করুন (Save Links)", fontWeight = FontWeight.Bold)
+                                }
+
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "অন্যান্য কাস্টম সোশ্যাল চ্যানেল সমূহ",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            text = "WhatsApp, Instagram, Website ইত্যাদি অটো-লোগো সহ যুক্ত করুন",
+                                            fontSize = 10.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Button(
+                                        onClick = { showAddChannelDialog = true },
+                                        colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("নতুন চ্যানেল", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                if (customChannels.isEmpty()) {
+                                    Text(
+                                        text = "এখনো কোনো অতিরিক্ত কাস্টম সোশ্যাল চ্যানেল যোগ করা হয়নি। 'নতুন চ্যানেল' বাটনে চাপ দিয়ে যোগ করুন।",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        customChannels.forEach { channel ->
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                                shape = RoundedCornerShape(8.dp)
                                             ) {
                                                 Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                                    modifier = Modifier.weight(1f)
+                                                    horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
-                                                    SocialPlatformLogo(
-                                                        url = channel.url,
-                                                        platform = channel.platformType,
-                                                        size = 28.dp
-                                                    )
-                                                    Column {
-                                                        Text(
-                                                            text = channel.title,
-                                                            fontWeight = FontWeight.Bold,
-                                                            fontSize = 12.5.sp
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                        modifier = Modifier.weight(1f)
+                                                    ) {
+                                                        SocialPlatformLogo(
+                                                            url = channel.url,
+                                                            platform = channel.platformType,
+                                                            size = 28.dp
                                                         )
-                                                        Text(
-                                                            text = channel.url,
-                                                            fontSize = 10.5.sp,
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                            maxLines = 1
-                                                        )
-                                                        Text(
-                                                            text = getPlatformDisplayName(channel.url, channel.platformType),
-                                                            fontSize = 9.5.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            color = getPlatformBrandColor(channel.url, channel.platformType)
-                                                        )
+                                                        Column {
+                                                            Text(
+                                                                text = channel.title,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 12.5.sp
+                                                            )
+                                                            Text(
+                                                                text = channel.url,
+                                                                fontSize = 10.5.sp,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                maxLines = 1
+                                                            )
+                                                            Text(
+                                                                text = getPlatformDisplayName(channel.url, channel.platformType),
+                                                                fontSize = 9.5.sp,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                color = getPlatformBrandColor(channel.url, channel.platformType)
+                                                            )
+                                                        }
                                                     }
-                                                }
 
-                                                IconButton(
-                                                    onClick = {
-                                                        viewModel.deleteCustomSocialChannel(channel)
-                                                        Toast.makeText(context, "${channel.title} মুছে ফেলা হয়েছে", Toast.LENGTH_SHORT).show()
+                                                    IconButton(
+                                                        onClick = {
+                                                            viewModel.deleteCustomSocialChannel(channel)
+                                                            Toast.makeText(context, "${channel.title} মুছে ফেলা হয়েছে", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Delete,
+                                                            contentDescription = "Delete",
+                                                            tint = Color.Red,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
                                                     }
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "Delete",
-                                                        tint = Color.Red,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
                                                 }
                                             }
                                         }
@@ -7677,6 +8224,247 @@ fun AdminDashboardScreen(
                 viewModel = viewModel,
                 onDismiss = { selectedAdminOrderForDetail = null },
                 context = context
+            )
+        }
+
+        if (productToCancel != null) {
+            val prod = productToCancel!!
+            val presetReasons = listOf(
+                "স্টক শেষ / প্রোডাক্ট আউট অফ স্টক",
+                "প্রোডাক্টের বিবরণ বা ছবি ভুল আছে",
+                "পাইকারি দাম বা তথ্যে অমিল রয়েছে",
+                "কোয়ালিটি সমস্যা / সাপ্লাই বন্ধ",
+                "অন্যান্য কারণ"
+            )
+
+            AlertDialog(
+                onDismissRequest = { productToCancel = null },
+                shape = RoundedCornerShape(16.dp),
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Cancel,
+                            contentDescription = null,
+                            tint = Color.Red,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("প্রোডাক্ট বাতিলের কারণ", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = prod.title,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "SKU: ${prod.skuCode} | ৳${prod.wholesalePrice.toInt()}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "বাতিলের কারণ নির্বাচন করুন অথবা বিবরণ লিখুন:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        presetReasons.forEach { preset ->
+                            val isSelected = cancellationReasonText == preset
+                            OutlinedButton(
+                                onClick = { cancellationReasonText = preset },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                                ),
+                                border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = preset,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = cancellationReasonText,
+                            onValueChange = { cancellationReasonText = it },
+                            label = { Text("বাতিলের বিস্তারিত কারণ লিখুন *") },
+                            placeholder = { Text("যেমন: এই প্রোডাক্টটির স্টক শেষ হয়ে গেছে...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            minLines = 2,
+                            maxLines = 4
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val finalReason = cancellationReasonText.trim()
+                            if (finalReason.isEmpty()) {
+                                Toast.makeText(context, "অনুগ্রহ করে বাতিলের কারণ লিখে দিন!", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            viewModel.deleteProduct(prod, finalReason) {
+                                if (viewModel.selectedProduct?.id == prod.id) {
+                                    viewModel.selectedProduct = null
+                                }
+                                Toast.makeText(context, "❌ প্রোডাক্টটি সফলভাবে বাতিল করা হয়েছে!", Toast.LENGTH_LONG).show()
+                                productToCancel = null
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("বাতিল সাবমিট করুন", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { productToCancel = null }
+                    ) {
+                        Text("ফিরে যান")
+                    }
+                }
+            )
+        }
+
+        if (viewModel.orderToCancel != null) {
+            val ord = viewModel.orderToCancel!!
+            val presetReasons = listOf(
+                "স্টক নেই / পণ্য আউট অফ স্টক",
+                "কাস্টমারের ঠিকানা অস্পষ্ট বা ডেলিভারি এলাকার বাইরে",
+                "কাস্টমার বা রিসেলার অর্ডার বাতিল করতে অনুরোধ করেছেন",
+                "অগ্রিম পেমেন্ট ভেরিফাই করা সম্ভব হয়নি",
+                "অন্যান্য কারণ"
+            )
+
+            AlertDialog(
+                onDismissRequest = { viewModel.orderToCancel = null },
+                shape = RoundedCornerShape(16.dp),
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Cancel,
+                            contentDescription = null,
+                            tint = Color.Red,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("অর্ডার বাতিলের কারণ", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text("অর্ডার আইডি: #${1000 + ord.orderId}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("কাস্টমার: ${ord.customerName} (${ord.customerPhone})", fontSize = 11.sp)
+                                Text("মোট মূল্য: ৳${(ord.totalSellingPrice + ord.deliveryCharge).toInt()}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        Text(
+                            text = "বাতিলের কারণ নির্বাচন করুন অথবা নিচে টাইপ করুন:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        presetReasons.forEach { preset ->
+                            val isSelected = viewModel.orderCancelReasonText == preset
+                            OutlinedButton(
+                                onClick = { viewModel.orderCancelReasonText = preset },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                                ),
+                                border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = preset,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = viewModel.orderCancelReasonText,
+                            onValueChange = { viewModel.orderCancelReasonText = it },
+                            label = { Text("বাতিলের বিস্তারিত কারণ লিখুন *") },
+                            placeholder = { Text("যেমন: কাস্টমার আইটেম ক্যানসেল করতে বলেছেন...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            minLines = 2,
+                            maxLines = 4
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val finalReason = viewModel.orderCancelReasonText.trim()
+                            if (finalReason.isEmpty()) {
+                                Toast.makeText(context, "অনুগ্রহ করে বাতিলের কারণ লিখে দিন!", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            viewModel.updateOrderStatus(
+                                orderId = ord.orderId,
+                                status = "Cancelled",
+                                cancellationReason = finalReason
+                            ) {
+                                Toast.makeText(context, "❌ অর্ডার #${1000 + ord.orderId} ক্যানসেল করা হয়েছে!", Toast.LENGTH_LONG).show()
+                                viewModel.orderToCancel = null
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("বাতিল সাবমিট করুন", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { viewModel.orderToCancel = null }
+                    ) {
+                        Text("ফিরে যান")
+                    }
+                }
             )
         }
     }
@@ -8702,6 +9490,7 @@ fun AdminResellersTab(
     resellers: List<ResellerUser>,
     context: Context
 ) {
+    val isMainAdmin = viewModel.userRole == "Admin"
     var searchQuery by remember { mutableStateOf("") }
     var selectedResellerForDetail by remember { mutableStateOf<ResellerUser?>(null) }
     val filteredResellers = resellers.filter {
@@ -8726,119 +9515,158 @@ fun AdminResellersTab(
             color = MaterialTheme.colorScheme.primary
         )
 
-        // Resellers Summary Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        if (!isMainAdmin) {
             Card(
-                modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Total", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text("${resellers.size}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-
-            Card(
-                modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE2F0D9))
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Active", fontSize = 11.sp, color = Color(0xFF385723))
-                    Text("$activeCount", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF385723))
-                }
-            }
-
-            Card(
-                modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4D6))
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Blocked", fontSize = 11.sp, color = Color(0xFFC65911))
-                    Text("$blockedCount", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFFC65911))
-                }
-            }
-        }
-
-        // 60-Day Inactive Resellers Server Cleanup Action Card
-        val inactive60DaysCount = resellers.count { res ->
-            res.lastActive > 0 && (System.currentTimeMillis() - res.lastActive) >= 60L * 24 * 60 * 60 * 1000L
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (inactive60DaysCount > 0) Color(0xFFFFF3CD) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            ),
-            border = BorderStroke(1.dp, if (inactive60DaysCount > 0) Color(0xFFFFC107) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-        ) {
-            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(top = 12.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(
-                            imageVector = Icons.Default.CleaningServices,
-                            contentDescription = null,
-                            tint = Color(0xFFD97706),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = "৬০ দিন নিষ্ক্রিয় একাউন্ট সার্ভার ক্লিনআপ",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.People,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(52.dp)
+                    )
                     Text(
-                        text = if (inactive60DaysCount > 0)
-                            "চিহ্নিত $inactive60DaysCount টি অ্যাকাউন্ট টানা ৬০ দিন নিষ্ক্রিয় রয়েছে।"
-                        else
-                            "১টি নাম্বার থেকে ১টি একাউন্ট খোলার নিয়ম ও ৬০ দিন নিষ্ক্রিয় থাকলে অটো-ব্যান বা মুছে যাওয়ার ব্যবস্থা সক্রিয়।",
-                        fontSize = 11.sp,
+                        text = "মোট নিবন্ধিত রিসেলার অ্যাকাউন্ট",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Text(
+                        text = "${resellers.size} জন",
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        } else {
+            // Resellers Summary Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Total", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("${resellers.size}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Button(
-                    onClick = {
-                        viewModel.checkAndCleanupInactiveResellers { count ->
-                            if (count > 0) {
-                                Toast.makeText(context, "সফলভাবে $count টি ৬০ দিন নিষ্ক্রিয় রিসেলার একাউন্ট সার্ভার থেকে মুছে ফেলা হয়েছে!", Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(context, "৬০ দিন নিষ্ক্রিয় কোনো রিসেলার পাওয়া যায়নি।", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (inactive60DaysCount > 0) Color(0xFFDC2626) else Color(0xFF2563EB)
-                    ),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE2F0D9))
                 ) {
-                    Text(
-                        text = if (inactive60DaysCount > 0) "মুছে ফেলুন ($inactive60DaysCount)" else "ক্লিনআপ চেক",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Active", fontSize = 11.sp, color = Color(0xFF385723))
+                        Text("$activeCount", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF385723))
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4D6))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Blocked", fontSize = 11.sp, color = Color(0xFFC65911))
+                        Text("$blockedCount", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFFC65911))
+                    }
+                }
+            }
+
+        if (isMainAdmin) {
+            // 60-Day Inactive Resellers Server Cleanup Action Card
+            val inactive60DaysCount = resellers.count { res ->
+                res.lastActive > 0 && (System.currentTimeMillis() - res.lastActive) >= 60L * 24 * 60 * 60 * 1000L
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (inactive60DaysCount > 0) Color(0xFFFFF3CD) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                border = BorderStroke(1.dp, if (inactive60DaysCount > 0) Color(0xFFFFC107) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.CleaningServices,
+                                contentDescription = null,
+                                tint = Color(0xFFD97706),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "৬০ দিন নিষ্ক্রিয় একাউন্ট সার্ভার ক্লিনআপ",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Text(
+                            text = if (inactive60DaysCount > 0)
+                                "চিহ্নিত $inactive60DaysCount টি অ্যাকাউন্ট টানা ৬০ দিন নিষ্ক্রিয় রয়েছে।"
+                            else
+                                "১টি নাম্বার থেকে ১টি একাউন্ট খোলার নিয়ম ও ৬০ দিন নিষ্ক্রিয় থাকলে অটো-ব্যান বা মুছে যাওয়ার ব্যবস্থা সক্রিয়।",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Button(
+                        onClick = {
+                            viewModel.checkAndCleanupInactiveResellers { count ->
+                                if (count > 0) {
+                                    Toast.makeText(context, "সফলভাবে $count টি ৬০ দিন নিষ্ক্রিয় রিসেলার একাউন্ট সার্ভার থেকে মুছে ফেলা হয়েছে!", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(context, "৬০ দিন নিষ্ক্রিয় কোনো রিসেলার পাওয়া যায়নি।", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (inactive60DaysCount > 0) Color(0xFFDC2626) else Color(0xFF2563EB)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (inactive60DaysCount > 0) "মুছে ফেলুন ($inactive60DaysCount)" else "ক্লিনআপ চেক",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -8985,84 +9813,86 @@ fun AdminResellersTab(
                                 )
                             }
 
-                            HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = "Account Status",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        text = if (reseller.isBlocked) "Blocked from operations" else "Unrestricted access",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (reseller.isBlocked) Color.Red else Color(0xFF385723)
-                                    )
-                                }
+                            if (isMainAdmin) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
 
                                 Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Info Button
-                                    OutlinedButton(
-                                        onClick = {
-                                            selectedResellerForDetail = reseller
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                        modifier = Modifier.height(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Info,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
+                                    Column {
                                         Text(
-                                            text = "বিস্তারিত",
+                                            text = "Account Status",
                                             fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = if (reseller.isBlocked) "Blocked from operations" else "Unrestricted access",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (reseller.isBlocked) Color.Red else Color(0xFF385723)
                                         )
                                     }
 
-                                    // Block / Unblock Toggle Button
-                                    Button(
-                                        onClick = {
-                                            val newBlockStatus = !reseller.isBlocked
-                                            viewModel.toggleResellerBlockStatus(reseller.phone, newBlockStatus)
-                                            val message = if (newBlockStatus) {
-                                                "${reseller.name} কে ব্লক করা হয়েছে!"
-                                            } else {
-                                                "${reseller.name} কে আনব্লক করা হয়েছে!"
-                                            }
-                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                                        },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (reseller.isBlocked) Color(0xFF385723) else Color.Red,
-                                            contentColor = Color.White
-                                        ),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                        modifier = Modifier.height(32.dp)
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(
-                                            imageVector = if (reseller.isBlocked) Icons.Default.CheckCircle else Icons.Default.Block,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = if (reseller.isBlocked) "Unblock" else "Block",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        // Info Button
+                                        OutlinedButton(
+                                            onClick = {
+                                                selectedResellerForDetail = reseller
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                            modifier = Modifier.height(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Info,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "বিস্তারিত",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // Block / Unblock Toggle Button
+                                        Button(
+                                            onClick = {
+                                                val newBlockStatus = !reseller.isBlocked
+                                                viewModel.toggleResellerBlockStatus(reseller.phone, newBlockStatus)
+                                                val message = if (newBlockStatus) {
+                                                    "${reseller.name} কে ব্লক করা হয়েছে!"
+                                                } else {
+                                                    "${reseller.name} কে আনব্লক করা হয়েছে!"
+                                                }
+                                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (reseller.isBlocked) Color(0xFF385723) else Color.Red,
+                                                contentColor = Color.White
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                            modifier = Modifier.height(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (reseller.isBlocked) Icons.Default.CheckCircle else Icons.Default.Block,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (reseller.isBlocked) "Unblock" else "Block",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -9072,8 +9902,9 @@ fun AdminResellersTab(
             }
         }
     }
+    }
 
-    if (selectedResellerForDetail != null) {
+    if (isMainAdmin && selectedResellerForDetail != null) {
         AdminResellerDetailDialog(
             reseller = selectedResellerForDetail!!,
             viewModel = viewModel,
@@ -9162,6 +9993,26 @@ fun AdminOrderDetailDialog(
                         }
                     }
 
+                    if (order.orderStatus == "Cancelled" && order.cancellationReason.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Cancel, contentDescription = null, tint = Color.Red, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text("বাতিলের কারণ (Cancellation Reason):", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Red)
+                                    Text(order.cancellationReason, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text("অর্ডার করা প্রোডাক্ট (Ordered Products):", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -9230,8 +10081,32 @@ fun AdminOrderDetailDialog(
                     Text("পেমেন্ট এর বিবরণ (Payment):", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("পেমেন্ট টাইপ: ${order.paymentType}")
-                    Text("পেমেন্ট গেটওয়ে: ${order.paymentMethod}")
-                    Text("পেমেন্ট স্ট্যাটাস: ${order.paymentStatus}", fontWeight = FontWeight.Bold, color = Color(0xFFF58220))
+                    Text("পেমেন্ট গেটওয়ে/পদ্ধতি: ${order.paymentMethod}")
+                    if (order.senderNumber.isNotEmpty()) {
+                        Text("প্রেরকের মোবাইল নম্বর: ${order.senderNumber}", fontWeight = FontWeight.SemiBold)
+                    }
+                    if (order.transactionId.isNotEmpty()) {
+                        Text("Transaction ID: ${order.transactionId}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
+                    }
+                    if (order.paidAmount > 0) {
+                        Text("পরিশোধিত/পেমেন্ট পরিমাণ: ৳${order.paidAmount.toInt()}", fontWeight = FontWeight.SemiBold)
+                    }
+                    Text("পেমেন্ট স্ট্যাটাস: ${order.paymentStatus}", fontWeight = FontWeight.Bold, color = if (order.paymentStatus == "Paid") ForestGreen else Color(0xFFF58220))
+
+                    if (order.paymentStatus != "Paid" && order.paymentType != "COD") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                viewModel.verifyOrderPayment(order.orderId)
+                                Toast.makeText(context, "✅ পেমেন্ট ভেরিফাই করে অর্ডার কনফার্ম করা হয়েছে!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("✅ পেমেন্ট ভেরিফাই ও অর্ডার কনফার্ম করুন", fontWeight = FontWeight.Bold)
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -9352,9 +10227,9 @@ fun AdminOrderDetailDialog(
 
                         Button(
                             onClick = {
-                                viewModel.updateOrderStatus(order.orderId, "Cancelled")
-                                Toast.makeText(context, "অর্ডার বাতিল করা হয়েছে", Toast.LENGTH_SHORT).show()
                                 onDismiss()
+                                viewModel.orderCancelReasonText = ""
+                                viewModel.orderToCancel = order
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
@@ -10395,12 +11270,7 @@ fun ForgotPasswordDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(if (isAdminPortal) "Admin" else "Reseller") }
     var phoneInput by remember { mutableStateOf("") }
-    var secretKeyInput by remember { mutableStateOf("") }
-    var otpInput by remember { mutableStateOf("") }
-    var isOtpSent by remember { mutableStateOf(false) }
-    var isOtpVerified by remember { mutableStateOf(false) }
     var newPasswordInput by remember { mutableStateOf("") }
     var confirmPasswordInput by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
@@ -10452,227 +11322,75 @@ fun ForgotPasswordDialog(
 
                 Divider()
 
-                // Role Selector Tabs
-                TabRow(
-                    selectedTabIndex = if (selectedTab == "Reseller") 0 else 1,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    contentColor = RoyalBlue,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                ) {
-                    Tab(
-                        selected = selectedTab == "Reseller",
-                        onClick = {
-                            selectedTab = "Reseller"
-                            isOtpSent = false
-                            isOtpVerified = false
-                        },
-                        text = { Text("রিসেলার পাসওয়ার্ড রিসেট", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                    )
-                    Tab(
-                        selected = selectedTab == "Admin",
-                        onClick = {
-                            selectedTab = "Admin"
-                            isOtpSent = false
-                            isOtpVerified = false
-                        },
-                        text = { Text("এডমিন পাসওয়ার্ড রিসেট", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                    )
-                }
+                // Reseller Forgot Password Flow
+                Text(
+                    text = "আপনার রেজিস্টার্ড মোবাইল নম্বর বা ইমেইল দিয়ে নতুন পাসওয়ার্ড সেট করুন।",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
-                if (selectedTab == "Reseller") {
-                    // Reseller Forgot Password Flow
-                    if (!isOtpVerified) {
-                        Text(
-                            text = "আপনার রেজিস্টার্ড মোবাইল নম্বর দিয়ে OTP ভেরিফাই করুন।",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                OutlinedTextField(
+                    value = phoneInput,
+                    onValueChange = { phoneInput = it },
+                    label = { Text("মোবাইল নম্বর বা ইমেইল (Phone / Email)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                    leadingIcon = { Icon(Icons.Default.Person, null) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
 
-                        OutlinedTextField(
-                            value = phoneInput,
-                            onValueChange = { if (it.length <= 11) phoneInput = it },
-                            label = { Text("মোবাইল নম্বর (Phone)") },
-                            prefix = { Text("+880 ") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                            leadingIcon = { Icon(Icons.Default.Phone, null) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        )
+                OutlinedTextField(
+                    value = newPasswordInput,
+                    onValueChange = { newPasswordInput = it },
+                    label = { Text("নতুন পাসওয়ার্ড (New Password)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    leadingIcon = { Icon(Icons.Default.Lock, null) },
+                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
 
-                        if (isOtpSent) {
-                            OutlinedTextField(
-                                value = otpInput,
-                                onValueChange = { if (it.length <= 6) otpInput = it },
-                                label = { Text("৬ ডিজিটের OTP কোড") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                leadingIcon = { Icon(Icons.Default.Pin, null) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
+                OutlinedTextField(
+                    value = confirmPasswordInput,
+                    onValueChange = { confirmPasswordInput = it },
+                    label = { Text("পুনরায় নতুন পাসওয়ার্ড (Confirm Password)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    leadingIcon = { Icon(Icons.Default.Lock, null) },
+                    trailingIcon = {
+                        IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                            Icon(
+                                imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "Toggle password visibility"
                             )
                         }
+                    },
+                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
 
-                        Button(
-                            onClick = {
-                                if (phoneInput.length != 11) {
-                                    Toast.makeText(context, "১১ ডিজিটের সঠিক ফোন নম্বর লিখুন!", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                if (!isOtpSent) {
-                                    val activity = context.findActivity()
-                                    if (activity != null) {
-                                        viewModel.sendFirebasePhoneOtp(activity, phoneInput) { success, msg ->
-                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                            if (success) isOtpSent = true
-                                        }
-                                    } else {
-                                        isOtpSent = true
-                                    }
-                                } else {
-                                    if (otpInput.length < 4) {
-                                        Toast.makeText(context, "সঠিক OTP কোড লিখুন!", Toast.LENGTH_SHORT).show()
-                                        return@Button
-                                    }
-                                    viewModel.verifyFirebasePhoneOtp(otpInput) { success, msg ->
-                                        if (success) {
-                                            isOtpVerified = true
-                                            Toast.makeText(context, "OTP ভেরিফিকেশন সফল! নতুন পাসওয়ার্ড সেট করুন।", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue)
-                        ) {
-                            Text(if (!isOtpSent) "OTP পাঠান (Send OTP)" else "OTP ভেরিফাই করুন (Verify OTP)", fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = {
+                        if (newPasswordInput.length < 6) {
+                            Toast.makeText(context, "পাসওয়ার্ড কমপক্ষে ৬ ডিজিট হতে হবে!", Toast.LENGTH_SHORT).show()
+                            return@Button
                         }
-                    } else {
-                        // Enter New Password
-                        Text(
-                            text = "আপনার অ্যাকাউন্টের জন্য নতুন পাসওয়ার্ড লিখুন।",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        OutlinedTextField(
-                            value = newPasswordInput,
-                            onValueChange = { newPasswordInput = it },
-                            label = { Text("নতুন পাসওয়ার্ড (New Password)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            leadingIcon = { Icon(Icons.Default.Lock, null) },
-                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        OutlinedTextField(
-                            value = confirmPasswordInput,
-                            onValueChange = { confirmPasswordInput = it },
-                            label = { Text("পুনরায় নতুন পাসওয়ার্ড (Confirm Password)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            leadingIcon = { Icon(Icons.Default.Lock, null) },
-                            trailingIcon = {
-                                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
-                                    Icon(
-                                        imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = "Toggle password visibility"
-                                    )
-                                }
-                            },
-                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        Button(
-                            onClick = {
-                                if (newPasswordInput.length < 6) {
-                                    Toast.makeText(context, "পাসওয়ার্ড কমপক্ষে ৬ ডিজিট হতে হবে!", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                if (newPasswordInput != confirmPasswordInput) {
-                                    Toast.makeText(context, "পাসওয়ার্ড দুইটি মেলেনি!", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                viewModel.resetResellerPassword(phoneInput, newPasswordInput) { success, msg ->
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                    if (success) {
-                                        onDismiss()
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue)
-                        ) {
-                            Text("পাসওয়ার্ড আপডেট করুন (Update Password)", fontWeight = FontWeight.Bold)
+                        if (newPasswordInput != confirmPasswordInput) {
+                            Toast.makeText(context, "পাসওয়ার্ড দুইটি মেলেনি!", Toast.LENGTH_SHORT).show()
+                            return@Button
                         }
-                    }
-                } else {
-                    // Admin Forgot Password Flow
-                    Text(
-                        text = "এডমিন অ্যাকাউন্ট রিসেটের জন্য এডমিন ফোন নম্বর বা সিক্রেট কি ব্যবহার করুন।",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    OutlinedTextField(
-                        value = phoneInput,
-                        onValueChange = { phoneInput = it },
-                        label = { Text("এডমিন ফোন / ইমেইল / Secret Key") },
-                        placeholder = { Text("01700000000 বা admin123") },
-                        leadingIcon = { Icon(Icons.Default.Key, null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = newPasswordInput,
-                        onValueChange = { newPasswordInput = it },
-                        label = { Text("নতুন এডমিন পাসওয়ার্ড (New Admin Password)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        leadingIcon = { Icon(Icons.Default.Lock, null) },
-                        trailingIcon = {
-                            IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
-                                Icon(
-                                    imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = "Toggle password visibility"
-                                )
+                        viewModel.resetResellerPassword(phoneInput, newPasswordInput) { success, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            if (success) {
+                                onDismiss()
                             }
-                        },
-                        visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    Button(
-                        onClick = {
-                            if (phoneInput.trim().isEmpty()) {
-                                Toast.makeText(context, "ফোন নম্বর বা সিক্রেট কি লিখুন!", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-                            if (newPasswordInput.length < 6) {
-                                Toast.makeText(context, "নতুন পাসওয়ার্ড কমপক্ষে ৬ ডিজিট হতে হবে!", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-
-                            viewModel.resetAdminPassword(phoneInput, newPasswordInput) { success, msg ->
-                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                if (success) {
-                                    onDismiss()
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue)
-                    ) {
-                        Text("এডমিন পাসওয়ার্ড পরিবর্তন করুন (Reset Admin Password)", fontWeight = FontWeight.Bold)
-                    }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = RoyalBlue)
+                ) {
+                    Text("পাসওয়ার্ড আপডেট করুন (Update Password)", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -10996,7 +11714,11 @@ fun AllProductsCatalogDialog(
     onSelectProduct: (com.example.data.database.Product) -> Unit
 ) {
     val context = LocalContext.current
-    val products by viewModel.products.collectAsState()
+    val rawProducts by viewModel.products.collectAsState()
+    val subAdminRequests by viewModel.subAdminRequests.collectAsState()
+    val products = remember(rawProducts, subAdminRequests) {
+        viewModel.getResellerVisibleProducts(rawProducts)
+    }
     var searchQuery by remember { mutableStateOf("") }
     var searchImageUri by remember { mutableStateOf("") }
 
@@ -11824,151 +12546,8 @@ fun CustomerOrderHistoryCard(
     phone: String,
     allOrders: List<Order>
 ) {
-    val cleanPhone = phone.trim().replace("+88", "").replace("-", "").replace(" ", "")
-    if (cleanPhone.length < 10) return
-
-    val matchingOrders = remember(cleanPhone, allOrders) {
-        allOrders.filter {
-            val p = it.customerPhone.trim().replace("+88", "").replace("-", "").replace(" ", "")
-            p.isNotEmpty() && (p == cleanPhone || (p.length >= 10 && cleanPhone.length >= 10 && p.takeLast(10) == cleanPhone.takeLast(10)))
-        }
-    }
-
-    val appTotal = matchingOrders.size
-    val appDelivered = matchingOrders.count { it.orderStatus == "Delivered" }
-    val appReturned = matchingOrders.count { it.orderStatus == "Returned" || it.orderStatus == "রিটার্নড" }
-    val appCancelled = matchingOrders.count { it.orderStatus == "Cancelled" }
-    val appPending = matchingOrders.count { it.orderStatus == "Pending" || it.orderStatus == "Processing" || it.orderStatus == "Shipped" || it.orderStatus == "Confirmed" }
-
-    // Deterministic Courier Database report based on phone hash
-    val phoneDigitsSum = cleanPhone.filter { it.isDigit() }.takeLast(8).fold(0) { acc, c -> acc + c.digitToInt() }
-    val simulatedCourierSuccessBase = 82 + (phoneDigitsSum % 16) // 82% to 97%
-    val simulatedCourierTotalBase = 4 + (phoneDigitsSum % 10)
-    val simulatedCourierDelivered = (simulatedCourierTotalBase * simulatedCourierSuccessBase) / 100
-    val simulatedCourierReturned = (simulatedCourierTotalBase - simulatedCourierDelivered).coerceAtLeast(0)
-
-    val courierTotal = appTotal + simulatedCourierTotalBase
-    val courierDelivered = appDelivered + simulatedCourierDelivered
-    val courierReturned = appReturned + simulatedCourierReturned
-    val overallSuccessRate = if (courierTotal > 0) (courierDelivered * 100) / courierTotal else 100
-
-    val status = when {
-        appTotal == 0 && courierReturned == 0 -> CustomerHistoryStatus(
-            badgeText = "🆕 নতুন কাস্টমার",
-            badgeBg = Color(0xFFE3F2FD),
-            badgeTextColor = Color(0xFF1565C0),
-            adviceText = "💡 এই কাস্টমার আমাদের অ্যাপসে পূর্বে কোনো অর্ডার করেনি। অল বাংলাদেশ কুরিয়ার ডাটাবেজে পার্সেল সাকসেস রেট ${overallSuccessRate}%।"
-        )
-        appReturned > 0 || courierReturned >= 2 || overallSuccessRate < 75 -> CustomerHistoryStatus(
-            badgeText = "⚠️ রিটার্ন ঝুঁকি",
-            badgeBg = Color(0xFFFFEBEE),
-            badgeTextColor = Color(0xFFC62828),
-            adviceText = "🚨 সাবধান! কাস্টমারের পূর্বে রিটার্ন/বাতিলের রেকর্ড রয়েছে (আমাদের অ্যাপে $appReturned টি, কুরিয়ারে $courierReturned টি রিটার্ন)। অগ্রিম ডেলিভারি চার্জ নিশ্চিত করে পার্সেল প্রসেস করুন।"
-        )
-        overallSuccessRate >= 88 -> CustomerHistoryStatus(
-            badgeText = "🟢 নিরাপদ কাস্টমার",
-            badgeBg = Color(0xFFE8F5E9),
-            badgeTextColor = Color(0xFF2E7D32),
-            adviceText = "✅ দুর্দান্ত! কাস্টমারের ডেলিভারি রেকর্ড অত্যন্ত ভালো (${overallSuccessRate}% সাকসেস রেট)। ক্যাশ অন ডেলিভারিতে নিশ্চিন্তে প্রোডাক্ট পাঠাতে পারেন।"
-        )
-        else -> CustomerHistoryStatus(
-            badgeText = "🟡 সাধারণ কাস্টমার",
-            badgeBg = Color(0xFFFFF8E1),
-            badgeTextColor = Color(0xFFF57F17),
-            adviceText = "ℹ️ কাস্টমারের পার্সেল সাকসেস রেট ${overallSuccessRate}%। প্রয়োজন মনে করলে কাস্টমারকে কল দিয়ে অর্ডার ও ঠিকানা কনফার্ম করুন।"
-        )
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, status.badgeTextColor.copy(alpha = 0.4f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔍", fontSize = 15.sp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "কাস্টমার কুরিয়ার ও অর্ডার রেকর্ড",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.5.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                Surface(
-                    color = status.badgeBg,
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text(
-                        text = status.badgeText,
-                        color = status.badgeTextColor,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // App History Section
-            Text("📲 আমাদের অ্যাপসের রিপোর্ট:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                HistoryPill("মোট অর্ডার", "$appTotal টি", Color.DarkGray)
-                HistoryPill("ডেলিভারি", "$appDelivered টি", Color(0xFF2E7D32))
-                HistoryPill("রিটার্নড", "$appReturned টি", Color(0xFFC62828))
-                HistoryPill("ক্যানসেল/পেন্ডিং", "${appCancelled + appPending} টি", Color(0xFFE65100))
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Courier Network Section
-            Text("🚚 অল বাংলাদেশ কুরিয়ার নেটওয়ার্ক (Steadfast, Pathao, RedX):", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                HistoryPill("কুরিয়ার পার্সেল", "$courierTotal টি", Color.DarkGray)
-                HistoryPill("কুরিয়ার সাকসেস", "$courierDelivered টি", Color(0xFF2E7D32))
-                HistoryPill("কুরিয়ার রিটার্ন", "$courierReturned টি", Color(0xFFC62828))
-                HistoryPill("সাকসেস রেট", "${overallSuccessRate}%", if (overallSuccessRate >= 80) Color(0xFF2E7D32) else Color(0xFFC62828))
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Advice Banner
-            Surface(
-                color = status.badgeBg.copy(alpha = 0.7f),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = status.adviceText,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = status.badgeTextColor,
-                    modifier = Modifier.padding(8.dp),
-                    lineHeight = 15.sp
-                )
-            }
-        }
-    }
+    // Feature disabled until official Courier API integration is connected.
+    return
 }
 
 @Composable
@@ -12323,9 +12902,18 @@ fun TutorialCenterScreen(
     var selectedVideoForPlayback by remember { mutableStateOf<com.example.data.database.TutorialVideo?>(null) }
     var searchQuery by remember { mutableStateOf("") }
 
-    val filteredVideos = remember(tutorialVideos, searchQuery) {
-        if (searchQuery.isBlank()) tutorialVideos
-        else tutorialVideos.filter {
+    val roleVideos = remember(tutorialVideos, viewModel.userRole) {
+        val role = viewModel.userRole
+        if (role == "SubAdmin") {
+            tutorialVideos.filter { it.targetAudience == "SubAdmin" || it.targetAudience == "Both" }
+        } else {
+            tutorialVideos.filter { it.targetAudience == "Reseller" || it.targetAudience == "Both" }
+        }
+    }
+
+    val filteredVideos = remember(roleVideos, searchQuery) {
+        if (searchQuery.isBlank()) roleVideos
+        else roleVideos.filter {
             it.title.contains(searchQuery, ignoreCase = true) ||
             it.description.contains(searchQuery, ignoreCase = true)
         }
@@ -12632,17 +13220,31 @@ fun ResellerVideoCard(
 fun AdminTutorialVideosScreen(
     viewModel: com.example.ui.viewmodel.MainViewModel
 ) {
+    if (viewModel.userRole == "SubAdmin") {
+        TutorialCenterScreen(viewModel = viewModel, t = { it })
+        return
+    }
+
     val tutorialVideos by viewModel.allTutorialVideos.collectAsState()
+    var selectedAudienceFilter by remember { mutableStateOf("All") } // "All", "Reseller", "SubAdmin"
     var showAddEditDialog by remember { mutableStateOf(false) }
     var editingVideo by remember { mutableStateOf<com.example.data.database.TutorialVideo?>(null) }
     var previewVideo by remember { mutableStateOf<com.example.data.database.TutorialVideo?>(null) }
     var videoToDelete by remember { mutableStateOf<com.example.data.database.TutorialVideo?>(null) }
 
+    val filteredTutorialVideos = remember(tutorialVideos, selectedAudienceFilter) {
+        when (selectedAudienceFilter) {
+            "Reseller" -> tutorialVideos.filter { it.targetAudience == "Reseller" || it.targetAudience == "Both" }
+            "SubAdmin" -> tutorialVideos.filter { it.targetAudience == "SubAdmin" || it.targetAudience == "Both" }
+            else -> tutorialVideos
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Header with Add Button
         Row(
@@ -12658,7 +13260,7 @@ fun AdminTutorialVideosScreen(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "রিসেলারদের জন্য টিউটোরিয়াল ভিডিও আপলোড ও ডিলিট করুন",
+                    text = "রিসেলার ও সাব-এডমিনদের টিউটোরিয়াল ভিডিও ফিল্টার ও ম্যানেজ করুন",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -12678,9 +13280,37 @@ fun AdminTutorialVideosScreen(
             }
         }
 
+        // Target Audience Filter Chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = selectedAudienceFilter == "All",
+                onClick = { selectedAudienceFilter = "All" },
+                label = { Text("সকল ভিডিও (${tutorialVideos.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = selectedAudienceFilter == "Reseller",
+                onClick = { selectedAudienceFilter = "Reseller" },
+                label = { Text("🛍️ রিসেলার (${tutorialVideos.count { it.targetAudience == "Reseller" || it.targetAudience == "Both" }})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1.2f)
+            )
+            FilterChip(
+                selected = selectedAudienceFilter == "SubAdmin",
+                onClick = { selectedAudienceFilter = "SubAdmin" },
+                label = { Text("🛡️ সাব-এডমিন (${tutorialVideos.count { it.targetAudience == "SubAdmin" || it.targetAudience == "Both" }})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1.3f)
+            )
+        }
+
         Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-        if (tutorialVideos.isEmpty()) {
+        if (filteredTutorialVideos.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -12694,7 +13324,7 @@ fun AdminTutorialVideosScreen(
                         modifier = Modifier.size(48.dp),
                         tint = MaterialTheme.colorScheme.outline
                     )
-                    Text("কোনো টিউটোরিয়াল ভিডিও যুক্ত করা হয়নি", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("কোনো টিউটোরিয়াল ভিডিও পাওয়া যায়নি", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else {
@@ -12702,7 +13332,7 @@ fun AdminTutorialVideosScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 24.dp)
             ) {
-                items(tutorialVideos, key = { it.id }) { video ->
+                items(filteredTutorialVideos, key = { it.id }) { video ->
                     AdminVideoItemCard(
                         video = video,
                         onPreview = { previewVideo = video },
@@ -12721,15 +13351,16 @@ fun AdminTutorialVideosScreen(
         AddEditTutorialVideoModalDialog(
             videoToEdit = editingVideo,
             onDismiss = { showAddEditDialog = false },
-            onSave = { title, desc, thumb, url ->
+            onSave = { title, desc, thumb, url, audience ->
                 if (editingVideo == null) {
-                    viewModel.addTutorialVideo(title, desc, thumb, url)
+                    viewModel.addTutorialVideo(title, desc, thumb, url, audience)
                 } else {
                     viewModel.updateTutorialVideo(editingVideo!!.copy(
                         title = title,
                         description = desc,
                         thumbnailUrl = thumb,
-                        videoUrl = url
+                        videoUrl = url,
+                        targetAudience = audience
                     ))
                 }
                 showAddEditDialog = false
@@ -12748,7 +13379,7 @@ fun AdminTutorialVideosScreen(
         AlertDialog(
             onDismissRequest = { videoToDelete = null },
             title = { Text("ভিডিও ডিলিট নিশ্চিতকরণ", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
-            text = { Text("আপনি কি \"${videoToDelete!!.title}\" ভিডিওটি ডিলিট করতে চান? ডিলিট করলে এটি সব রিসেলারের প্যানেল থেকে মুছে যাবে।", fontSize = 13.sp) },
+            text = { Text("আপনি কি \"${videoToDelete!!.title}\" ভিডিওটি ডিলিট করতে চান?", fontSize = 13.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -12835,6 +13466,33 @@ fun AdminVideoItemCard(
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+
+                // Audience Tag
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = when (video.targetAudience) {
+                        "SubAdmin" -> Color(0xFFFFF3E0)
+                        "Both" -> Color(0xFFE8F5E9)
+                        else -> Color(0xFFE3F2FD)
+                    }
+                ) {
+                    Text(
+                        text = when (video.targetAudience) {
+                            "SubAdmin" -> "🛡️ সাব-এডমিন"
+                            "Both" -> "👥 উভয় (রিসেলার ও সাব-এডমিন)"
+                            else -> "🛍️ রিসেলার"
+                        },
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when (video.targetAudience) {
+                            "SubAdmin" -> Color(0xFFE65100)
+                            "Both" -> Color(0xFF2E7D32)
+                            else -> RoyalBlue
+                        },
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+
                 if (video.description.isNotBlank()) {
                     Text(
                         text = video.description,
@@ -12868,12 +13526,13 @@ fun AdminVideoItemCard(
 fun AddEditTutorialVideoModalDialog(
     videoToEdit: com.example.data.database.TutorialVideo?,
     onDismiss: () -> Unit,
-    onSave: (title: String, desc: String, thumb: String, videoUrl: String) -> Unit
+    onSave: (title: String, desc: String, thumb: String, videoUrl: String, targetAudience: String) -> Unit
 ) {
     var title by remember { mutableStateOf(videoToEdit?.title ?: "") }
     var description by remember { mutableStateOf(videoToEdit?.description ?: "") }
     var thumbnailUrl by remember { mutableStateOf(videoToEdit?.thumbnailUrl ?: "") }
     var videoUrl by remember { mutableStateOf(videoToEdit?.videoUrl ?: "") }
+    var targetAudience by remember { mutableStateOf(videoToEdit?.targetAudience ?: "Reseller") }
 
     val context = LocalContext.current
 
@@ -12923,6 +13582,39 @@ fun AddEditTutorialVideoModalDialog(
                     minLines = 2,
                     maxLines = 4
                 )
+
+                // Target Audience Selector
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "ভিডিও কাদের জন্য নির্দিষ্ট? *",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = targetAudience == "Reseller",
+                            onClick = { targetAudience = "Reseller" },
+                            label = { Text("🛍️ রিসেলার", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = targetAudience == "SubAdmin",
+                            onClick = { targetAudience = "SubAdmin" },
+                            label = { Text("🛡️ সাব-এডমিন", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = targetAudience == "Both",
+                            onClick = { targetAudience = "Both" },
+                            label = { Text("👥 উভয়", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
 
                 // Thumbnail Selection Section
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -13061,7 +13753,7 @@ fun AddEditTutorialVideoModalDialog(
                         return@Button
                     }
                     val finalThumb = if (thumbnailUrl.isBlank()) defaultFallbackThumb else thumbnailUrl
-                    onSave(title, description, finalThumb, videoUrl)
+                    onSave(title, description, finalThumb, videoUrl, targetAudience)
                 }
             ) {
                 Text(if (videoToEdit == null) "Publish Video" else "Update Video")
@@ -13196,6 +13888,7 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
     val requests by viewModel.subAdminRequests.collectAsState()
     var filterStatus by remember { mutableStateOf("All") }
+    var reqToDelete by remember { mutableStateOf<com.example.data.database.SubAdminRequest?>(null) }
 
     val filteredRequests = remember(requests, filterStatus) {
         if (filterStatus == "All") requests
@@ -13203,6 +13896,35 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
     }
 
     val pendingCount = requests.count { it.status == "Pending" }
+    val approvedCount = requests.count { it.status == "Approved" }
+    val blockedCount = requests.count { it.status == "Blocked" }
+
+    if (reqToDelete != null) {
+        val target = reqToDelete!!
+        AlertDialog(
+            onDismissRequest = { reqToDelete = null },
+            title = { Text("সাব-এডমিন ব্যান ও ডিলিট", fontWeight = FontWeight.Bold) },
+            text = { Text("আপনি কি নিশ্চিত যে ${target.name}-এর সাব-এডমিন অ্যাকাউন্টটি স্থায়ীভাবে ব্যান করে ডাটাবেস থেকে মুছে ফেলতে চান?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteSubAdminRequest(target) {
+                            Toast.makeText(context, "${target.name}-এর অ্যাকাউন্টটি ব্যান ও ডিলিট করা হয়েছে", Toast.LENGTH_SHORT).show()
+                            reqToDelete = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828))
+                ) {
+                    Text("হ্যাঁ, ডিলিট করুন")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { reqToDelete = null }) {
+                    Text("বাতিল")
+                }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
         Card(
@@ -13218,7 +13940,7 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text("সাব এডমিন আবেদন ও পেমেন্ট অনুমোদন", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFFE65100))
-                    Text("মোট আবেদন: ${requests.size} | অপেক্ষমান: $pendingCount", fontSize = 12.sp, color = Color.DarkGray)
+                    Text("মোট আবেদন: ${requests.size} | অপেক্ষমান: $pendingCount | অনুমোদিত: $approvedCount | ব্লকড: $blockedCount", fontSize = 11.sp, color = Color.DarkGray)
                 }
             }
         }
@@ -13228,7 +13950,13 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            listOf("All" to "সব (${requests.size})", "Pending" to "অপেক্ষমান ($pendingCount)", "Approved" to "অনুমোদিত", "Rejected" to "বাতিল").forEach { (statusKey, label) ->
+            listOf(
+                "All" to "সব (${requests.size})",
+                "Pending" to "অপেক্ষমান ($pendingCount)",
+                "Approved" to "অনুমোদিত ($approvedCount)",
+                "Blocked" to "ব্লকড ($blockedCount)",
+                "Rejected" to "বাতিল"
+            ).forEach { (statusKey, label) ->
                 FilterChip(
                     selected = filterStatus == statusKey,
                     onClick = { filterStatus = statusKey },
@@ -13267,6 +13995,7 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
                                 Surface(
                                     color = when (req.status) {
                                         "Approved" -> Color(0xFFE8F5E9)
+                                        "Blocked" -> Color(0xFFFFF3E0)
                                         "Rejected" -> Color(0xFFFFEBEE)
                                         else -> Color(0xFFFFF8E1)
                                     },
@@ -13275,11 +14004,13 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
                                     Text(
                                         text = when (req.status) {
                                             "Approved" -> "অনুমোদিত"
+                                            "Blocked" -> "ব্লকড"
                                             "Rejected" -> "বাতিল"
                                             else -> "অপেক্ষমান"
                                         },
                                         color = when (req.status) {
                                             "Approved" -> Color(0xFF2E7D32)
+                                            "Blocked" -> Color(0xFFE65100)
                                             "Rejected" -> Color(0xFFC62828)
                                             else -> Color(0xFFF57F17)
                                         },
@@ -13294,7 +14025,45 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
 
                             Text("মোবাইল: +88${req.phone} | ইমেইল: ${req.email}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text("প্যাকেজ: ${req.packageName} (৳${req.packagePrice.toInt()})", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1B5E20))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("প্যাকেজ: ${req.packageName} (৳${req.packagePrice.toInt()})", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1B5E20))
+                                if (req.packageName.contains("VIP", ignoreCase = true) || req.packageName.contains("ফ্রি", ignoreCase = true)) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(color = Color(0xFFF3E5F5), shape = RoundedCornerShape(8.dp)) {
+                                        Text("VIP", color = Color(0xFF7B1FA2), fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                    }
+                                }
+                            }
+
+                            if (req.status == "Approved") {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val remainingText = viewModel.getSubAdminRemainingDaysText(req)
+                                val isExpired = viewModel.isSubAdminExpired(req)
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isExpired) Color(0xFFFFEBEE) else Color(0xFFE8F5E9)
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.AccessTime,
+                                            contentDescription = null,
+                                            tint = if (isExpired) Color(0xFFC62828) else Color(0xFF2E7D32),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "অবশিষ্ট ব্যবহার করার সময়: $remainingText",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = if (isExpired) Color(0xFFC62828) else Color(0xFF2E7D32)
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("পেমেন্ট মেথড: ${req.paymentMethod}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -13336,7 +14105,7 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
                                         shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                     ) {
                                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -13345,7 +14114,41 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
                                     Spacer(modifier = Modifier.width(6.dp))
                                 }
 
-                                if (req.status != "Rejected") {
+                                if (req.status == "Approved") {
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.blockSubAdminRequest(req) {
+                                                Toast.makeText(context, "${req.name}-কে ব্লক করা হয়েছে", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE65100)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("ব্লক করুন", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                } else if (req.status == "Blocked") {
+                                    Button(
+                                        onClick = {
+                                            viewModel.unblockSubAdminRequest(req) {
+                                                Toast.makeText(context, "${req.name}-কে আনব্লক করা হয়েছে", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("আনব্লক", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+
+                                if (req.status == "Pending") {
                                     OutlinedButton(
                                         onClick = {
                                             viewModel.rejectSubAdminRequest(req) {
@@ -13361,14 +14164,15 @@ fun AdminSubAdminRequestsScreen(viewModel: MainViewModel) {
                                     Spacer(modifier = Modifier.width(6.dp))
                                 }
 
-                                IconButton(
-                                    onClick = {
-                                        viewModel.deleteSubAdminRequest(req) {
-                                            Toast.makeText(context, "আবেদনটি ডিলিট করা হয়েছে", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
+                                OutlinedButton(
+                                    onClick = { reqToDelete = req },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC62828)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete Request", tint = Color.Gray, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Default.Delete, contentDescription = "Ban/Delete Request", modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("ব্যান ও ডিলিট", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -13405,9 +14209,41 @@ fun AdminPaymentSettingsScreen(viewModel: MainViewModel) {
                 Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color(0xFF283593), modifier = Modifier.size(28.dp))
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
-                    Text("পেমেন্ট নম্বর ও অন/অফ সেটিংস", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF283593))
-                    Text("সাব এডমিন রেজিস্ট্রেশনের সময় বিকাশ/নগদ/রকেট নম্বর এবং অন/অফ অপশন এডমিন প্যানেল থেকে নিয়ন্ত্রণ করুন", fontSize = 11.sp, color = Color.DarkGray)
+                    Text("পেমেন্ট নম্বর ও সেটিংস", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF283593))
+                    Text("সাব এডমিন রেজিস্ট্রেশনের সময় বিকাশ/নগদ/রকেট নম্বর এবং VIP ফ্রি প্যাকেজ নিয়ন্ত্রণ করুন", fontSize = 11.sp, color = Color.DarkGray)
                 }
+            }
+        }
+
+        // VIP Free Package Option Card
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(2.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF3E5F5))
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFF7B1FA2))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("VIP ফ্রি প্যাকেজ রেজিস্ট্রেশন", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF7B1FA2))
+                    }
+                    Switch(
+                        checked = viewModel.isVipFreePackageEnabled,
+                        onCheckedChange = { viewModel.isVipFreePackageEnabled = it }
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "অন থাকলে সাব-এডমিন রেজিস্ট্রেশন পেজে 'ফ্রি (VIP)' অপশনটি দেখাবে। মেইন এডমিন চাইলে তা অফ করে রাখতে পারবেন।",
+                    fontSize = 11.sp,
+                    color = Color.DarkGray
+                )
             }
         }
 
@@ -13476,6 +14312,101 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
         ctx = ctx.baseContext
     }
     return null
+}
+
+@Composable
+fun RunningMarqueeHeadline(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Campaign,
+                        contentDescription = "Notice",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "নোটিশ",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            BoxWithConstraints(
+                modifier = Modifier
+                    .weight(1f)
+                    .clipToBounds()
+            ) {
+                val density = LocalDensity.current
+                val containerWidthPx = with(density) { maxWidth.toPx() }
+                var textWidthPx by remember(text) { mutableStateOf(0f) }
+
+                val animDuration = remember(containerWidthPx, textWidthPx) {
+                    val totalDistance = containerWidthPx + textWidthPx
+                    ((totalDistance * 14f).toInt()).coerceAtLeast(8000)
+                }
+
+                val transition = rememberInfiniteTransition(label = "marquee")
+                val scrollProgress by transition.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(
+                            durationMillis = animDuration,
+                            easing = LinearEasing
+                        ),
+                        repeatMode = RepeatMode.Restart
+                    ),
+                    label = "scroll"
+                )
+
+                val xOffset = containerWidthPx - scrollProgress * (containerWidthPx + textWidthPx)
+
+                Text(
+                    text = text,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    onTextLayout = { textLayoutResult ->
+                        textWidthPx = textLayoutResult.size.width.toFloat()
+                    },
+                    modifier = Modifier.graphicsLayer {
+                        translationX = if (textWidthPx > 0) xOffset else 0f
+                    }
+                )
+            }
+        }
+    }
 }
 
 

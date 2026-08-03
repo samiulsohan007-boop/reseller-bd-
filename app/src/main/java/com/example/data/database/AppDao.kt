@@ -34,6 +34,15 @@ interface AppDao {
     @Update
     suspend fun updateOrder(order: Order)
 
+    @Query("SELECT COUNT(*) FROM orders WHERE LOWER(TRIM(transactionId)) = LOWER(TRIM(:trxId)) AND LENGTH(TRIM(:trxId)) > 0")
+    suspend fun countTransactionId(trxId: String): Int
+
+    @Query("SELECT MAX(orderId) FROM orders")
+    suspend fun getMaxOrderId(): Int?
+
+    @Query("SELECT * FROM orders WHERE customerPhone = :phone AND date >= :sinceTimestamp")
+    suspend fun getRecentOrdersByPhone(phone: String, sinceTimestamp: Long): List<Order>
+
     // Wallet
     @Query("SELECT * FROM wallet WHERE id = 1")
     fun getWalletFlow(): Flow<Wallet?>
@@ -138,8 +147,14 @@ interface AppDao {
     suspend fun clearAllNotifications()
 
     // Support Messages
+    @Query("SELECT * FROM support_messages WHERE resellerPhone = :phone AND adminKey = :adminKey ORDER BY timestamp ASC")
+    fun getSupportMessagesForResellerAndAdmin(phone: String, adminKey: String): Flow<List<SupportMessage>>
+
     @Query("SELECT * FROM support_messages WHERE resellerPhone = :phone ORDER BY timestamp ASC")
     fun getSupportMessagesForReseller(phone: String): Flow<List<SupportMessage>>
+
+    @Query("SELECT * FROM support_messages WHERE adminKey = :adminKey ORDER BY timestamp ASC")
+    fun getSupportMessagesForAdminKey(adminKey: String): Flow<List<SupportMessage>>
 
     @Query("SELECT * FROM support_messages ORDER BY timestamp ASC")
     fun getAllSupportMessages(): Flow<List<SupportMessage>>

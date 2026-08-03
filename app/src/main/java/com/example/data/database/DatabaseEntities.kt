@@ -22,7 +22,9 @@ data class Product(
     val youtubeVideoUrl: String = "",
     val tiktokVideoUrl: String = "",
     val category: String = "অন্যান্য ক্যাটাগরি",
-    val subcategory: String = ""
+    val subcategory: String = "",
+    val addedByRole: String = "Admin",
+    val addedByPhone: String = ""
 )
 
 @Entity(tableName = "categories")
@@ -44,7 +46,10 @@ data class Order(
     val deliveryInstructions: String,
     val paymentType: String, // "COD", "Advance Delivery", "Full Advance"
     val paymentMethod: String, // "bKash", "Nagad", "Rocket"
-    val paymentStatus: String = "Pending Payment", // "Pending Verification", "Paid", "COD"
+    val paymentStatus: String = "Pending Payment", // "Pending Payment", "Paid", "COD"
+    val senderNumber: String = "",
+    val transactionId: String = "",
+    val paidAmount: Double = 0.0,
     val totalWholesalePrice: Double,
     val totalSellingPrice: Double,
     val calculatedProfit: Double,
@@ -56,7 +61,10 @@ data class Order(
     val productImageUrls: String = "", // Comma-separated list of product image URLs
     val date: Long = System.currentTimeMillis(),
     val deliveredDate: Long = 0L,
-    val isProfitReleased: Boolean = false
+    val isProfitReleased: Boolean = false,
+    val adminRole: String = "Admin",
+    val adminPhone: String = "",
+    val cancellationReason: String = ""
 )
 
 @Entity(tableName = "notifications")
@@ -126,7 +134,8 @@ data class SupportMessage(
     val resellerName: String = "",
     val text: String,
     val isFromAdmin: Boolean = false,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val adminKey: String = "Admin"
 )
 
 @Entity(tableName = "custom_social_channels")
@@ -167,6 +176,7 @@ data class TutorialVideo(
     val description: String = "",
     val thumbnailUrl: String = "",
     val videoUrl: String = "",
+    val targetAudience: String = "Reseller", // "Reseller", "SubAdmin", "Both"
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -177,14 +187,16 @@ data class SubAdminRequest(
     val phone: String,
     val email: String,
     val password: String,
-    val packageName: String, // "1 Month", "6 Months", "12 Months"
-    val packagePrice: Double, // 200.0, 1000.0, 1850.0
-    val paymentMethod: String, // "bKash", "Nagad", "Rocket"
+    val packageName: String, // "1 Month", "6 Months", "12 Months", "VIP Free"
+    val packagePrice: Double, // 200.0, 1000.0, 1850.0, 0.0
+    val paymentMethod: String, // "bKash", "Nagad", "Rocket", "VIP Free"
     val senderPhone: String,
     val trxId: String,
-    val status: String = "Pending", // "Pending", "Approved", "Rejected"
+    val status: String = "Pending", // "Pending", "Approved", "Rejected", "Blocked"
     val requestedDate: Long = System.currentTimeMillis(),
-    val approvedDate: Long = 0L
+    val approvedDate: Long = 0L,
+    val expiryDate: Long = 0L,
+    val isBlocked: Boolean = false
 )
 
 @Entity(tableName = "payment_method_configs")

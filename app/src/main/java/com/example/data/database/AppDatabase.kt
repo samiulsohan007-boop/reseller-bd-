@@ -24,7 +24,7 @@ import androidx.room.RoomDatabase
         SubAdminRequest::class,
         PaymentMethodConfig::class
     ],
-    version = 14,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
